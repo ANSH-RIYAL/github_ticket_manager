@@ -10,7 +10,12 @@ from flask import Blueprint, jsonify, request
 from server.services.diff_service import compute_local_diff
 from server.services.knowledge_service import load_knowledge_bundle
 from server.services.guards import ScopeGuard, RuleGuard, ImpactGuard
-from server.services.llm_service import evaluate_ticket_alignment
+from server.services.llm_service import (
+    evaluate_ticket_alignment,
+    scope_guard_llm,
+    rule_guard_llm,
+    impact_guard_llm,
+)
 from server.services.orchestrator import compute_score_and_rank
 
 
@@ -37,9 +42,10 @@ def analyze_local_pr_route():
 
     diff_bundle = compute_local_diff(base_dir=base_dir, head_dir=head_dir)
 
-    scope_out = ScopeGuard.run(ticket=ticket, diff_bundle=diff_bundle)
-    rule_out = RuleGuard.run(rules=bundle["rules"], diff_bundle=diff_bundle, deps=bundle["deps"])
-    impact_out = ImpactGuard.run(api=bundle["api_surface"], deps=bundle["deps"], diff_bundle=diff_bundle)
+    # Prefer LLM guards with deterministic fallbacks
+    scope_out = scope_guard_llm(ticket=ticket, diff_bundle=diff_bundle)
+    rule_out = rule_guard_llm(rules=bundle["rules"], diff_bundle=diff_bundle, deps=bundle["deps"])
+    impact_out = impact_guard_llm(api=bundle["api_surface"], deps=bundle["deps"], diff_bundle=diff_bundle)
 
     alignment = evaluate_ticket_alignment(ticket=ticket, diff_bundle=diff_bundle)
 

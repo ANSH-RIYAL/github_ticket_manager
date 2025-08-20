@@ -78,3 +78,87 @@ def _heuristic_alignment(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) ->
     }
 
 
+def _openai_chat(system: str, user_obj: Dict[str, Any]) -> Dict[str, Any] | None:
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return None
+    body = {
+        "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(user_obj, ensure_ascii=False)}
+        ],
+        "temperature": 0,
+        "response_format": {"type": "json_object"}
+    }
+    try:
+        req = urllib.request.Request(
+            url="https://api.openai.com/v1/chat/completions",
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        content = data["choices"][0]["message"]["content"]
+        return json.loads(content)
+    except Exception:
+        return None
+
+
+def scope_guard_llm(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
+    system = (
+        "ONLY_OUTPUT valid JSON. Determine out_of_scope_files by comparing ticket.expected_change_scope.files_glob and out_of_scope_glob to diff files."
+    )
+    inp = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff_bundle": diff_bundle}
+    out = _openai_chat(system, inp)
+    if out and "out_of_scope_files" in out:
+        return {"out_of_scope_files": sorted(set(out.get("out_of_scope_files", []))) }
+    # fallback heuristic
+    from .guards import ScopeGuard as _SG  # type: ignore
+    return _SG.run(ticket, diff_bundle)
+
+
+def rule_guard_llm(rules: Dict[str, Any], diff_bundle: Dict[str, Any], deps: Dict[str, Any]) -> Dict[str, Any]:
+    system = (
+        "ONLY_OUTPUT valid JSON with {\"violations\": [{\"rule_id\",\"file\",\"evidence\",\"severity\"}]}. "
+        "Evaluate rules against changed files and deps graph; be conservative and include evidence."
+    )
+    inp = {"schema_version": "1.0", "rules": rules, "diff_bundle": diff_bundle, "deps": deps}
+    out = _openai_chat(system, inp)
+    if out and "violations" in out:
+        return {"violations": out.get("violations", [])}
+    from .guards import RuleGuard as _RG  # type: ignore
+    return _RG.run(rules, diff_bundle, deps)
+
+
+def impact_guard_llm(api: Dict[str, Any], deps: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
+    system = (
+        "ONLY_OUTPUT valid JSON with keys changed_exports, signature_changes, possibly_impacted. "
+        "Use api.exports, deps graph, and diff hunks to infer changes to exported symbols and affected dependents."
+    )
+    inp = {"schema_version": "1.0", "api_surface": api, "deps": deps, "diff_bundle": diff_bundle}
+    out = _openai_chat(system, inp)
+    if out and all(k in out for k in ("changed_exports", "signature_changes", "possibly_impacted")):
+        return {
+            "changed_exports": sorted(set(out.get("changed_exports", []))),
+            "signature_changes": sorted(set(out.get("signature_changes", []))),
+            "possibly_impacted": sorted(set(out.get("possibly_impacted", []))),
+        }
+    from .guards import ImpactGuard as _IG  # type: ignore
+    return _IG.run(api, deps, diff_bundle)
+
+
+def build_repo_doc_llm(structure_doc: Dict[str, Any]) -> Dict[str, Any] | None:
+    system = (
+        "ONLY_OUTPUT valid JSON for repo.json with keys {schema_version, repo{name,default_branch,language_primary,package_manager}, "
+        "entry_points, build.commands, test.commands, layers, scope_policy}. Infer conservatively from provided structure."
+    )
+    inp = {"schema_version": "1.0", "structure": structure_doc}
+    out = _openai_chat(system, inp)
+    return out
+
+

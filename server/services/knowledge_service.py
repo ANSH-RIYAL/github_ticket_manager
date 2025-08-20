@@ -63,58 +63,132 @@ def _infer_repo(repo_dir: str) -> Dict[str, Any]:
 
 
 def _infer_api_surface(repo_dir: str) -> Dict[str, Any]:
-    # Heuristic: parse src/index.ts re-exports lines like: export * from "./addDays/index.ts";
+    # Parse src/index.ts re-exports and discover symbol names from each module file
     exports: List[Dict[str, Any]] = []
-    index_path = Path(repo_dir) / "src" / "index.ts"
+    src_root = Path(repo_dir) / "src"
+    index_path = src_root / "index.ts"
+    reexport_targets: List[str] = []
     if index_path.exists():
         try:
             text = index_path.read_text(encoding="utf-8", errors="ignore")
-            for line in text.splitlines():
-                line = line.strip()
+            for raw in text.splitlines():
+                line = raw.strip()
+                # export * from "./addDays/index.ts";
                 if line.startswith("export * from \"") and line.endswith("\";"):
                     inner = line[len("export * from \"") : -2]
-                    # compute a rough symbol from folder name
-                    parts = inner.split("/")
-                    if len(parts) >= 2:
-                        folder = parts[-2]
-                        symbol = folder
-                        exports.append({"symbol": symbol, "from": f"{inner}", "kind": "function"})
+                    reexport_targets.append(inner)
+                # export type * from "./types.ts";
+                if line.startswith("export type * from \"") and line.endswith("\";"):
+                    inner = line[len("export type * from \"") : -2]
+                    reexport_targets.append(inner)
         except Exception:
             pass
+
+    def classify_and_symbols(module_path: Path) -> List[Dict[str, Any]]:
+        try:
+            text = module_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return []
+        found: List[Dict[str, Any]] = []
+        for raw in text.splitlines():
+            line = raw.strip()
+            # function exports
+            if line.startswith("export function "):
+                name = line.split()[2].split("(")[0]
+                found.append({"symbol": name, "kind": "function"})
+            # const exports
+            elif line.startswith("export const "):
+                name = line.split()[2].split("=")[0]
+                found.append({"symbol": name, "kind": "const"})
+            # type/interface exports
+            elif line.startswith("export interface "):
+                name = line.split()[2].split("{")[0]
+                found.append({"symbol": name, "kind": "type"})
+            elif line.startswith("export type "):
+                # export type Foo = ...
+                parts = line[len("export type "):].split("=")[0].strip()
+                if parts:
+                    name = parts.split()[0]
+                    found.append({"symbol": name, "kind": "type"})
+        return found
+
+    for inner in reexport_targets:
+        mod_rel = inner if inner.endswith(".ts") else f"{inner}.ts"
+        module_path = (src_root / Path(mod_rel))
+        if module_path.exists():
+            symbols = classify_and_symbols(module_path)
+            for s in symbols:
+                exports.append({"symbol": s["symbol"], "from": inner, "kind": s["kind"]})
+        else:
+            # try index.ts resolution if path points to directory
+            alt = src_root / inner / "index.ts"
+            if alt.exists():
+                symbols = classify_and_symbols(alt)
+                for s in symbols:
+                    exports.append({"symbol": s["symbol"], "from": f"{inner}/index.ts", "kind": s["kind"]})
 
     return {"schema_version": "1.0", "exports": exports}
 
 
 def _infer_deps(repo_dir: str) -> Dict[str, Any]:
-    # Minimal file-level import scan in src/** for TypeScript
+    # Robust-ish file-level import scan in src/** for TypeScript
     nodes: List[Dict[str, Any]] = []
     edges: List[Dict[str, str]] = []
     src_root = Path(repo_dir) / "src"
     if not src_root.exists():
         return {"schema_version": "1.0", "nodes": nodes, "edges": edges}
 
-    for path in src_root.rglob("*.ts"):
+    all_files = list(src_root.rglob("*.ts"))
+    for path in all_files:
         rel = path.relative_to(Path(repo_dir)).as_posix()
         nodes.append({"id": rel, "layer": "library"})
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
-        for line in text.splitlines():
-            line_s = line.strip()
-            if line_s.startswith("import ") and " from \"" in line_s and line_s.endswith("\""):
-                try:
-                    mod = line_s.split(" from \"")[-1][:-1]
-                except Exception:
-                    continue
-                if mod.startswith("./") or mod.startswith("../"):
-                    target = (path.parent / (mod + (".ts" if not mod.endswith(".ts") else ""))).resolve()
-                    if target.exists():
-                        try:
-                            target_rel = target.relative_to(Path(repo_dir)).as_posix()
-                            edges.append({"from": rel, "to": target_rel})
-                        except Exception:
-                            pass
+        for raw in text.splitlines():
+            line_s = raw.strip()
+            if not line_s.startswith("import "):
+                continue
+            # Handle: import ... from "..." | '...'
+            mod = None
+            if " from \"" in line_s:
+                mod = line_s.split(" from \"")[-1]
+                if mod.endswith("\""):
+                    mod = mod[:-1]
+            elif " from '\"" in line_s:
+                # defensive; unlikely
+                pass
+            elif " from '" in line_s:
+                mod = line_s.split(" from '")[-1]
+                if mod.endswith("'"):
+                    mod = mod[:-1]
+            else:
+                # bare import like: import "./polyfill";
+                if line_s.endswith(";") and ("\"" in line_s or "'" in line_s):
+                    q = "\"" if "\"" in line_s else "'"
+                    try:
+                        mod = line_s.split(q)[1]
+                    except Exception:
+                        mod = None
+            if not mod:
+                continue
+            if not (mod.startswith("./") or mod.startswith("../")):
+                continue
+            # Resolve to candidate targets
+            candidates = []
+            base = path.parent / mod
+            candidates.append(base)
+            candidates.append(Path(str(base) + ".ts"))
+            candidates.append(base / "index.ts")
+            for t in candidates:
+                if t.exists():
+                    try:
+                        target_rel = t.resolve().relative_to(Path(repo_dir)).as_posix()
+                        edges.append({"from": rel, "to": target_rel})
+                        break
+                    except Exception:
+                        continue
 
     return {"schema_version": "1.0", "nodes": nodes, "edges": edges}
 
