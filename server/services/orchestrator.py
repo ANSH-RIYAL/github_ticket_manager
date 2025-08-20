@@ -15,12 +15,24 @@ def compute_score_and_rank(
     w_struct = float(weights.get("structure_compliance", 0.35))
     w_conv = float(weights.get("conventions", 0.15))
 
-    unmet = alignment.get("ticket_alignment", {}).get("unmet", [])
-    matched = alignment.get("ticket_alignment", {}).get("matched", [])
-    ticket_score = 100 if matched and not unmet else (50 if matched else 0)
+    tb = alignment.get("ticket_alignment", {})
+    unmet = tb.get("unmet", [])
+    matched = tb.get("matched", [])
+    # proportional ticket score
+    total_acs = len(unmet) + len(matched)
+    if total_acs > 0:
+        ticket_score = int(round(100 * (len(matched) / total_acs)))
+    else:
+        ticket_score = 0
 
     violations = rules.get("violations", [])
-    struct_score = 100 - min(100, len([v for v in violations if v.get("severity") == "error"]) * 40 + len(violations) * 10)
+    # base struct score and penalties
+    error_violations = len([v for v in violations if v.get("severity") == "error"]) * 40
+    warn_violations = (len(violations) - len([v for v in violations if v.get("severity") == "error"])) * 10
+    out_of_scope_penalty = len(scope.get("out_of_scope_files", [])) * 12
+    export_penalty = len(impact.get("changed_exports", [])) * 15
+    signature_penalty = len(impact.get("signature_changes", [])) * 10
+    struct_score = 100 - min(100, error_violations + warn_violations + out_of_scope_penalty + export_penalty + signature_penalty)
 
     # conventions not implemented separately; keep neutral
     conv_score = 100

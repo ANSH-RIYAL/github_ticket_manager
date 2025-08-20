@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 results/
 tmp/
+prompt_performance/
 
 
 repos/
