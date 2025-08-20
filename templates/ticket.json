@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "ticket": {
+    "id": "string",
+    "title": "string",
+    "summary": "string",
+    "acceptance_criteria": [
+      { "id": "AC-1", "text": "string", "verification": "unit|integration|manual" }
+    ],
+    "expected_change_scope": { "files_glob": ["glob"], "modules": [] },
+    "out_of_scope_glob": ["glob"]
+  }
+}
+
+

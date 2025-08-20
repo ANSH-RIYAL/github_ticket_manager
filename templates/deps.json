@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "nodes": [ { "id": "path", "layer": "string" } ],
+  "edges": [ { "from": "path", "to": "path" } ]
+}
+
+

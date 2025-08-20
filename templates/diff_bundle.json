@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "base": "string",
+  "head": "string",
+  "summary": { "files_changed": 0, "insertions": 0, "deletions": 0 },
+  "files": [
+    {
+      "path": "path",
+      "status": "modified|added|removed|renamed",
+      "old_path": null,
+      "hunks": [
+        {
+          "meta": "@@ -old_start,old_lines +new_start,new_lines @@",
+          "old_start": 0,
+          "old_lines": 0,
+          "new_start": 0,
+          "new_lines": 0,
+          "text": "string"
+        }
+      ]
+    }
+  ]
+}
+
+

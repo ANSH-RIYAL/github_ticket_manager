@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "ticket_alignment": { "matched": [], "unmet": [], "evidence": [] },
+  "scope": { "out_of_scope_files": [] },
+  "rules": { "violations": [] },
+  "impact": { "changed_exports": [], "signature_changes": [], "possibly_impacted": [] },
+  "score": 0,
+  "risk_level": "low|medium|high",
+  "rank": 3,
+  "recommendations": []
+}
+
+

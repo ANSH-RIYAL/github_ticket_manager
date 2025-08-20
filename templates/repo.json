@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "repo": {
+    "name": "string",
+    "default_branch": "main",
+    "language_primary": "TypeScript",
+    "package_manager": "pnpm"
+  },
+  "entry_points": [{ "type": "library", "path": "src/index.ts" }],
+  "build": { "commands": [] },
+  "test": { "commands": [] },
+  "layers": [
+    { "name": "library", "globs": ["src/**"] },
+    { "name": "tests", "globs": ["test/**"] },
+    { "name": "scripts", "globs": ["scripts/**"] },
+    { "name": "docs", "globs": ["docs/**"] },
+    { "name": "examples", "globs": ["examples/**"] }
+  ],
+  "scope_policy": {
+    "allowed_change_globs": [],
+    "disallowed_change_globs": ["docs/**", "examples/**", "scripts/**"]
+  }
+}
+
+
