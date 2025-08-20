@@ -20,10 +20,11 @@ Per-analysis JSON:
 - Command: `git diff --unified=3 --no-color --find-renames --find-copies --output-indicator-new=+ --output-indicator-old=-`
 - Store unified hunks verbatim in `diff_bundle.json`. No difftastic overlay.
 
-### Guards (pure Python)
-- ScopeGuard(ticket, diff): returns `{ out_of_scope_files: [] }` by glob match.
-- RuleGuard(rules, diff, deps): returns `{ violations: [{ rule_id, file, evidence, severity }] }`.
-- ImpactGuard(api, deps, diff): returns `{ changed_exports: [], signature_changes: [], possibly_impacted: [] }`.
+### LLM-first Guards and Logging
+- Scope/Rule/Impact guards call OpenAI with slimmed inputs; deterministic fallbacks retained
+- Ticket alignment requires per-criterion evidence
+- repo.json is post-processed via LLM after programmatic scan
+- All prompts and I/O logged under `prompt_performance/last_*.json`
 
 ### LLM usage (instruction-locked, JSON-only)
 1) Ticket alignment

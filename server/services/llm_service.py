@@ -8,14 +8,61 @@ import urllib.request
 import urllib.error
 
 
+def _slim_diff(diff_bundle: Dict[str, Any], max_hunk_chars: int = 2000, files_only: bool = False) -> Dict[str, Any]:
+    files = []
+    total = 0
+    for f in diff_bundle.get("files", []):
+        entry = {"path": f.get("path"), "status": f.get("status"), "old_path": f.get("old_path")}
+        if not files_only:
+            hunks = []
+            for h in f.get("hunks", []):
+                text = h.get("text", "")
+                take = max_hunk_chars - total
+                if take <= 0:
+                    break
+                trimmed = text[:take]
+                total += len(trimmed)
+                hunks.append({
+                    "meta": h.get("meta"),
+                    "old_start": h.get("old_start"),
+                    "old_lines": h.get("old_lines"),
+                    "new_start": h.get("new_start"),
+                    "new_lines": h.get("new_lines"),
+                    "text": trimmed,
+                })
+            entry["hunks"] = hunks
+        files.append(entry)
+        if total >= max_hunk_chars:
+            break
+    return {"schema_version": diff_bundle.get("schema_version", "1.0"), "files": files}
+
+
+def _log_prompt(name: str, system: str, user_obj: Dict[str, Any], response_obj: Dict[str, Any] | None, error: str | None = None) -> None:
+    try:
+        from pathlib import Path
+        import json as _json
+        d = Path("prompt_performance")
+        d.mkdir(parents=True, exist_ok=True)
+        payload = {"system": system, "input": user_obj, "output": response_obj, "error": error}
+        (d / f"last_{name}.json").write_text(_json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def evaluate_ticket_alignment(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
         return _heuristic_alignment(ticket, diff_bundle)
 
-    # Model call with strict IO
-    system = "ONLY_OUTPUT valid JSON per schema. Validate PR diff against ticket acceptance criteria. Be evidence-based; if unsure, mark unmet."
-    user_payload = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff_bundle": diff_bundle}
+    # Model call with strict IO, per-criterion evidence requirement
+    system = (
+        "ONLY_OUTPUT valid JSON with {\"schema_version\":\"1.0\", \"ticket_alignment\":{\"matched\":[],\"unmet\":[],\"evidence\":[]}}. "
+        "For each acceptance criterion, decide matched/unmet strictly from diff hunks. "
+        "Match AC-1 if you see throw RangeError for non-integer amount. Match AC-2 if you see Number.isNaN handling. "
+        "Include file paths and hunk metas in evidence. If unsure, mark unmet."
+    )
+    slim = _slim_diff(diff_bundle, max_hunk_chars=3000)
+    user_payload = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff": slim}
     body = {
         "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         "messages": [
@@ -40,11 +87,13 @@ def evaluate_ticket_alignment(ticket: Dict[str, Any], diff_bundle: Dict[str, Any
             data = json.loads(resp.read().decode("utf-8"))
         content = data["choices"][0]["message"]["content"]
         parsed = json.loads(content)
+        _log_prompt("ticket_alignment", system, user_payload, parsed)
         # normalize to expected fields
         if "ticket_alignment" not in parsed:
             return _heuristic_alignment(ticket, diff_bundle)
         return parsed
-    except Exception:
+    except Exception as e:
+        _log_prompt("ticket_alignment", system, user_payload, None, error=str(e))
         return _heuristic_alignment(ticket, diff_bundle)
 
 
@@ -111,10 +160,13 @@ def _openai_chat(system: str, user_obj: Dict[str, Any]) -> Dict[str, Any] | None
 
 def scope_guard_llm(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
     system = (
-        "ONLY_OUTPUT valid JSON. Determine out_of_scope_files by comparing ticket.expected_change_scope.files_glob and out_of_scope_glob to diff files."
+        "ONLY_OUTPUT valid JSON: {\"out_of_scope_files\": []}. "
+        "Return paths from diff that violate ticket.expected_change_scope.files_glob or match out_of_scope_glob."
     )
-    inp = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff_bundle": diff_bundle}
+    slim = _slim_diff(diff_bundle, files_only=True)
+    inp = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff": slim}
     out = _openai_chat(system, inp)
+    _log_prompt("scope_guard", system, inp, out)
     if out and "out_of_scope_files" in out:
         return {"out_of_scope_files": sorted(set(out.get("out_of_scope_files", []))) }
     # fallback heuristic
@@ -124,11 +176,13 @@ def scope_guard_llm(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict
 
 def rule_guard_llm(rules: Dict[str, Any], diff_bundle: Dict[str, Any], deps: Dict[str, Any]) -> Dict[str, Any]:
     system = (
-        "ONLY_OUTPUT valid JSON with {\"violations\": [{\"rule_id\",\"file\",\"evidence\",\"severity\"}]}. "
-        "Evaluate rules against changed files and deps graph; be conservative and include evidence."
+        "ONLY_OUTPUT valid JSON: {\"violations\": []}. "
+        "For each rule, check changed file paths and deps edges. Include evidence with file paths or edge."
     )
-    inp = {"schema_version": "1.0", "rules": rules, "diff_bundle": diff_bundle, "deps": deps}
+    slim = _slim_diff(diff_bundle, files_only=True)
+    inp = {"schema_version": "1.0", "rules": rules, "diff": slim, "deps": deps}
     out = _openai_chat(system, inp)
+    _log_prompt("rule_guard", system, inp, out)
     if out and "violations" in out:
         return {"violations": out.get("violations", [])}
     from .guards import RuleGuard as _RG  # type: ignore
@@ -137,11 +191,17 @@ def rule_guard_llm(rules: Dict[str, Any], diff_bundle: Dict[str, Any], deps: Dic
 
 def impact_guard_llm(api: Dict[str, Any], deps: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
     system = (
-        "ONLY_OUTPUT valid JSON with keys changed_exports, signature_changes, possibly_impacted. "
-        "Use api.exports, deps graph, and diff hunks to infer changes to exported symbols and affected dependents."
+        "ONLY_OUTPUT valid JSON: {\"changed_exports\":[],\"signature_changes\":[],\"possibly_impacted\":[]}. "
+        "Detect any added/removed/modified export lines in diff hunks (lines starting with 'export '). Map to symbols. "
+        "Use api.exports and deps to list dependents of changed files."
     )
-    inp = {"schema_version": "1.0", "api_surface": api, "deps": deps, "diff_bundle": diff_bundle}
+    slim = _slim_diff(diff_bundle, max_hunk_chars=3000)
+    # filter api exports to changed file set
+    changed = {f.get("path") for f in diff_bundle.get("files", []) if f.get("path")}
+    filtered_api = {"schema_version": api.get("schema_version", "1.0"), "exports": [e for e in api.get("exports", []) if e.get("from") in changed]}
+    inp = {"schema_version": "1.0", "api_surface": filtered_api, "deps": deps, "diff": slim}
     out = _openai_chat(system, inp)
+    _log_prompt("impact_guard", system, inp, out)
     if out and all(k in out for k in ("changed_exports", "signature_changes", "possibly_impacted")):
         return {
             "changed_exports": sorted(set(out.get("changed_exports", []))),
@@ -159,6 +219,7 @@ def build_repo_doc_llm(structure_doc: Dict[str, Any]) -> Dict[str, Any] | None:
     )
     inp = {"schema_version": "1.0", "structure": structure_doc}
     out = _openai_chat(system, inp)
+    _log_prompt("repo_postprocess", system, inp, out)
     return out
 
 
@@ -174,6 +235,7 @@ def refine_ticket_llm(freeform_text: str, structure: Dict[str, Any] | None = Non
         "api_surface": api_surface or {},
     }
     out = _openai_chat(system, user)
+    _log_prompt("ticket_propose", system, user, out)
     if out and "ticket" in out:
         return out
     # fallback minimal ticket
