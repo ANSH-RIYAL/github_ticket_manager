@@ -198,8 +198,22 @@ def impact_guard_llm(api: Dict[str, Any], deps: Dict[str, Any], diff_bundle: Dic
     slim = _slim_diff(diff_bundle, max_hunk_chars=3000)
     # filter api exports to changed file set
     changed = {f.get("path") for f in diff_bundle.get("files", []) if f.get("path")}
+    # Reduce api exports to only those whose files changed; if none, still send an empty list
     filtered_api = {"schema_version": api.get("schema_version", "1.0"), "exports": [e for e in api.get("exports", []) if e.get("from") in changed]}
-    inp = {"schema_version": "1.0", "api_surface": filtered_api, "deps": deps, "diff": slim}
+    # prune deps to 1-hop around changed files
+    def prune_deps_graph(deps_doc: Dict[str, Any], changed_paths: set[str]) -> Dict[str, Any]:
+        edges = deps_doc.get("edges", [])
+        nodes = deps_doc.get("nodes", [])
+        neighbors: set[str] = set()
+        for e in edges:
+            if e.get("from") in changed_paths or e.get("to") in changed_paths:
+                neighbors.add(e.get("from"))
+                neighbors.add(e.get("to"))
+        sub_nodes = [n for n in nodes if n.get("id") in neighbors or n.get("id") in changed_paths]
+        sub_edges = [e for e in edges if e.get("from") in neighbors or e.get("to") in neighbors]
+        return {"schema_version": deps_doc.get("schema_version", "1.0"), "nodes": sub_nodes, "edges": sub_edges}
+    pruned_deps = prune_deps_graph(deps, changed)
+    inp = {"schema_version": "1.0", "api_surface": filtered_api, "deps": pruned_deps, "diff": slim}
     out = _openai_chat(system, inp)
     _log_prompt("impact_guard", system, inp, out)
     if out and all(k in out for k in ("changed_exports", "signature_changes", "possibly_impacted")):

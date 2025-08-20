@@ -50,23 +50,24 @@ def compute_score_and_rank(
         has_blocker = True
 
     thresholds = profile.get("risk_thresholds", {})
-    if has_blocker or total < 60:
+    if has_blocker or total < 40:
         risk = "high"
-    elif 60 <= total < 80:
+    elif 40 <= total < 70:
         risk = "medium"
     else:
         risk = "low"
 
-    if not has_blocker and total >= 90:
+    # Rank scale inverted to your desired mapping: 1 worst, 5 best
+    if has_blocker:
         rank = 1
-    elif not has_blocker and 80 <= total < 90:
-        rank = 2
-    elif not has_blocker and 70 <= total < 80:
-        rank = 3
-    elif has_blocker:
+    elif total >= 90:
         rank = 5
-    else:
+    elif 70 <= total < 90:
         rank = 4
+    elif 50 <= total < 70:
+        rank = 3
+    else:
+        rank = 2
 
     recs: List[str] = []
     if unmet:
