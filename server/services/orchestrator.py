@@ -9,6 +9,8 @@ def compute_score_and_rank(
     scope: Dict[str, Any],
     rules: Dict[str, Any],
     impact: Dict[str, Any],
+    feature_summary: Dict[str, Any] | None = None,
+    dry_run: Dict[str, Any] | None = None,
 ) -> Tuple[int, str, int, List[str]]:
     weights = profile.get("weights", {})
     w_ticket = float(weights.get("ticket_alignment", 0.5))
@@ -32,7 +34,10 @@ def compute_score_and_rank(
     out_of_scope_penalty = len(scope.get("out_of_scope_files", [])) * 12
     export_penalty = len(impact.get("changed_exports", [])) * 15
     signature_penalty = len(impact.get("signature_changes", [])) * 10
-    struct_score = 100 - min(100, error_violations + warn_violations + out_of_scope_penalty + export_penalty + signature_penalty)
+    config_drift_penalty = 0
+    if feature_summary:
+        config_drift_penalty = len(feature_summary.get("config_drift", [])) * 8
+    struct_score = 100 - min(100, error_violations + warn_violations + out_of_scope_penalty + export_penalty + signature_penalty + config_drift_penalty)
 
     # conventions not implemented separately; keep neutral
     conv_score = 100
@@ -78,6 +83,8 @@ def compute_score_and_rank(
         recs.append("Review breaking changes to public API.")
     if scope.get("out_of_scope_files"):
         recs.append("Remove or explain out-of-scope file changes.")
+    if feature_summary and feature_summary.get("config_drift"):
+        recs.append("Revert unintended config/port/dependency changes unless in scope.")
 
     return total, risk, rank, recs
 

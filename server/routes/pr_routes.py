@@ -10,6 +10,7 @@ from flask import Blueprint, jsonify, request
 from server.services.diff_service import compute_local_diff
 from server.services.knowledge_service import load_knowledge_bundle
 from server.services.guards import ScopeGuard, RuleGuard, ImpactGuard
+from server.services.dry_run_service import build_feature_summary, static_dry_run
 from server.services.llm_service import (
     evaluate_ticket_alignment,
     scope_guard_llm,
@@ -41,6 +42,8 @@ def analyze_local_pr_route():
     bundle = load_knowledge_bundle(str(knowledge_dir))
 
     diff_bundle = compute_local_diff(base_dir=base_dir, head_dir=head_dir, include_context=True)
+    feature_summary = build_feature_summary(ticket=ticket, diff_bundle=diff_bundle)
+    dry_run = static_dry_run(api_surface=bundle["api_surface"], deps=bundle["deps"], diff_bundle=diff_bundle)
 
     # Prefer LLM guards with deterministic fallbacks
     scope_out = scope_guard_llm(ticket=ticket, diff_bundle=diff_bundle)
@@ -55,6 +58,8 @@ def analyze_local_pr_route():
         scope=scope_out,
         rules=rule_out,
         impact=impact_out,
+        feature_summary=feature_summary,
+        dry_run=dry_run,
     )
 
     report = {
@@ -63,6 +68,8 @@ def analyze_local_pr_route():
         "scope": scope_out,
         "rules": rule_out,
         "impact": impact_out,
+        "feature_summary": feature_summary,
+        "dry_run": dry_run,
         "score": score,
         "risk_level": risk_level,
         "rank": rank,
@@ -79,6 +86,8 @@ def analyze_local_pr_route():
     out_dir = Path("results") / repo_id / "analysis"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "diff_bundle.json").write_text(json.dumps(diff_bundle, indent=2), encoding="utf-8")
+    (out_dir / "feature_summary.json").write_text(json.dumps(feature_summary, indent=2), encoding="utf-8")
+    (out_dir / "dry_run.json").write_text(json.dumps(dry_run, indent=2), encoding="utf-8")
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return jsonify({"ok": True, "report": report, "output_dir": str(out_dir)}), 200
 
