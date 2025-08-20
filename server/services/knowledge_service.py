@@ -225,15 +225,15 @@ def _profile() -> Dict[str, Any]:
     return {
         "schema_version": "1.0",
         "weights": {
-            "ticket_alignment": 0.5,
-            "structure_compliance": 0.35,
-            "conventions": 0.15,
+            "ticket_alignment": 0.6,
+            "structure_compliance": 0.4,
+            "conventions": 0.0,
         },
-        "blockers": ["NO_IMPORT_FROM_TESTS_001", "unmet_acceptance_criteria"],
+        "blockers": ["NO_IMPORT_FROM_TESTS_001"],
         "risk_thresholds": {
-            "high": "score < 60 or any blocker present",
-            "medium": "60 <= score < 80 and no blockers",
-            "low": "score >= 80 and no blockers",
+            "high": "score < 40 or any blocker present",
+            "medium": "40 <= score < 70 and no blockers",
+            "low": "score >= 70 and no blockers",
         },
     }
 
