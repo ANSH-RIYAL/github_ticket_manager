@@ -40,7 +40,7 @@ def analyze_local_pr_route():
     knowledge_dir = Path("results") / repo_id / "knowledge"
     bundle = load_knowledge_bundle(str(knowledge_dir))
 
-    diff_bundle = compute_local_diff(base_dir=base_dir, head_dir=head_dir)
+    diff_bundle = compute_local_diff(base_dir=base_dir, head_dir=head_dir, include_context=True)
 
     # Prefer LLM guards with deterministic fallbacks
     scope_out = scope_guard_llm(ticket=ticket, diff_bundle=diff_bundle)
@@ -67,6 +67,12 @@ def analyze_local_pr_route():
         "risk_level": risk_level,
         "rank": rank,
         "recommendations": recommendations,
+        "section_scores": {
+            "ticket_alignment": alignment.get("ticket_alignment", {}).get("matched", []),
+            "out_of_scope_count": len(scope_out.get("out_of_scope_files", [])),
+            "rule_violations": len(rule_out.get("violations", [])),
+            "api_changes": len(impact_out.get("changed_exports", [])) + len(impact_out.get("signature_changes", []))
+        },
     }
 
     # Persist stable outputs under results/{repoId}/analysis

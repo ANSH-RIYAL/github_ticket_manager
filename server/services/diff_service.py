@@ -94,7 +94,7 @@ def _parse_unified_diff(patch_text: str) -> Dict[str, Any]:
     return {"schema_version": "1.0", "base": "local", "head": "local", "summary": summary, "files": files}
 
 
-def compute_local_diff(base_dir: str, head_dir: str) -> Dict[str, Any]:
+def compute_local_diff(base_dir: str, head_dir: str, include_context: bool = True, context_bytes: int = 8000) -> Dict[str, Any]:
     # create temp repo; commit base, then replace with head, commit; run git diff between commits
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / "repo"
@@ -148,6 +148,21 @@ def compute_local_diff(base_dir: str, head_dir: str) -> Dict[str, Any]:
             parsed["summary"]["files_changed"] = len(files)
             return parsed
         patch = raw.decode(errors="ignore")
-        return _parse_unified_diff(patch)
+        parsed = _parse_unified_diff(patch)
+        if include_context:
+            # attach head file excerpts for changed files
+            for f in parsed.get("files", []):
+                p = Path(head_dir) / f.get("path", "")
+                try:
+                    if p.exists() and p.is_file():
+                        data = p.read_bytes()[:context_bytes]
+                        try:
+                            text = data.decode("utf-8", errors="ignore")
+                        except Exception:
+                            text = ""
+                        f["context"] = text
+                except Exception:
+                    f["context"] = ""
+        return parsed
 
 
