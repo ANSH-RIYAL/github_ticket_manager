@@ -15,6 +15,7 @@ server/
     guards.py
     llm_service.py
     orchestrator.py
+    dry_run_service.py
   storage/
     README.md
 templates/
@@ -26,6 +27,8 @@ templates/
   profile.json
   ticket.json
   diff_bundle.json
+  feature_summary.json
+  dry_run.json
 README.md
 ```
 
@@ -37,9 +40,11 @@ README.md
 ### Python Modules (high-level)
 - `knowledge_service`: scan repo and emit JSON artifacts
 - `diff_service`: compute local git diff between two folders; parse unified diff → diff_bundle.json
-- `guards`: ScopeGuard, RuleGuard, ImpactGuard
-- `llm_service`: ticket alignment only
-- `orchestrator`: runs guards, ticket alignment, scoring, and assembles final report
+- `dry_run_service`: extract diff features; perform static dependency impact reasoning (no execution)
+- `guards`: ScopeGuard, RuleGuard, ImpactGuard consume diff + features + dry_run
+- `llm_service`: ticket alignment + dry_run impact (LLM-first JSON)
+- `orchestrator`: runs dry-run, guards, ticket alignment, scoring, and assembles final report
 
 ### Configuration
 - Environment: `OPENAI_API_KEY`, `MODEL` (e.g., `gpt-4o-mini`), `TIMEOUT_MS`
+- Feature flags: `RUN_JS_TESTS=0` (reserved), `ENABLE_DRY_RUN=1`

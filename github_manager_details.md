@@ -3,6 +3,7 @@
 ### Roles (minimal)
 - Orchestrator: coordinates guards, LLM calls, scoring.
 - PR Agent: validates a PR using guards and structured prompts.
+- Dry-Run Analyzer: builds diff features and performs static dependency impact checks (no actual execution).
 
 ### Knowledge Artifacts (persistent JSON)
 - `repo.json`: repo basics, entrypoints, build/test, layer globs, scope policy.
@@ -15,6 +16,8 @@
 Per-analysis JSON:
 - `ticket.json`: refined ticket spec.
 - `diff_bundle.json`: unified git diff parsed into hunks; per-file status/rename.
+- `feature_summary.json`: compact diff feature vector for robust scoring and prompts.
+- `dry_run.json`: static impact analysis: symbol touches, signature deltas, callers, out-of-scope drift, config drift.
 
 ### Canonical diff
 - Command: `git diff --unified=3 --no-color --find-renames --find-copies --output-indicator-new=+ --output-indicator-old=-`
@@ -24,6 +27,7 @@ Per-analysis JSON:
 - Scope/Rule/Impact guards call OpenAI with slimmed inputs; deterministic fallbacks retained
 - Ticket alignment requires per-criterion evidence
 - repo.json is post-processed via LLM after programmatic scan
+- Dry-Run results and feature vectors are included in prompts to ground LLM reasoning
 - All prompts and I/O logged under `prompt_performance/last_*.json`
 
 ### LLM usage (instruction-locked, JSON-only)
@@ -41,7 +45,21 @@ Expected output:
 { "schema_version": "1.0", "ticket_alignment": { "matched": [], "unmet": [], "evidence": [ { "ac_id": "AC-1", "files": ["path"], "hunks": ["@@..."] } ] }, "notes": "" }
 ```
 
-2) Final scoring
+2) Dry-Run impact reasoning
+System:
+```
+ONLY_OUTPUT valid JSON. Given ticket + diff features + dry_run, identify risky areas: signature changes, export changes, likely impacted callers, config drift. Be conservative and reference symbols.
+```
+User input (contract):
+```json
+{ "schema_version": "1.0", "ticket": { ... }, "feature_summary": { ... }, "dry_run": { ... } }
+```
+Expected output:
+```json
+{ "schema_version": "1.0", "impact": { "changed_exports": [], "signature_changes": [], "possibly_impacted": [] }, "notes": "" }
+```
+
+3) Final scoring
 - Done deterministically in Python; no LLM required. Use `profile.json` weights and blockers.
 
 ### API (local-only for MVP)
@@ -51,8 +69,8 @@ Expected output:
 ### Tools (internal)
 - diff_service: compute_local_diff(base_dir, head_dir) → `diff_bundle.json`.
 - knowledge_service: repo scan → `repo.json`, `structure.json`, `api_surface.json`, `deps.json`.
-- guards: ScopeGuard, RuleGuard, ImpactGuard.
-- llm_service: evaluate_ticket_alignment(ticket, diff_bundle).
+- guards: ScopeGuard, RuleGuard, ImpactGuard, DryRunGuard (feature extraction + static impact).
+- llm_service: evaluate_ticket_alignment(ticket, diff_bundle); dry_run_impact_llm(ticket, feature_summary, dry_run).
 
 ### Final report (JSON)
 ```json
@@ -62,6 +80,8 @@ Expected output:
   "scope": { "out_of_scope_files": [] },
   "rules": { "violations": [] },
   "impact": { "changed_exports": [], "signature_changes": [], "possibly_impacted": [] },
+  "feature_summary": { "out_of_scope_count": 0, "config_drift": [], "export_changes": 0, "signature_changes": 0 },
+  "dry_run": { "symbols_touched": [], "callers": [], "config_drift": [], "notes": "" },
   "score": 0,
   "risk_level": "low|medium|high",
   "rank": 3,

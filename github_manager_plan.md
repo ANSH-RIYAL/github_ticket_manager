@@ -7,6 +7,7 @@ Build a minimal, reliable local PR validation service using Flask + OpenAI. JSON
 - Generate JSON knowledge bundle from a base repository folder.
 - Accept a ticket JSON, a base folder, and a modified folder; compute git diff; analyze PR.
 - Produce a structured JSON report with rank and recommendations.
+- Include Dry-Run Analyzer (no execution): syntactic + static dependency impact + diff features.
 
 ### Non-Goals (v0)
 - No GitHub API usage; local-only.
@@ -29,20 +30,28 @@ Build a minimal, reliable local PR validation service using Flask + OpenAI. JSON
 
 3) Local PR Analyze
    - Input: { base_dir, head_dir, ticket }
-   - Steps: compute `diff_bundle.json` via git diff; run ScopeGuard, RuleGuard, ImpactGuard; call LLM for ticket alignment; compute score/rank.
+   - Steps:
+     a) compute `diff_bundle.json` via git diff
+     b) build `feature_summary.json` (export/signature changes, out_of_scope_count, config drift, churn, code/noncode ratio)
+     c) Dry-Run Analyzer: `dry_run.json` with symbol touches, callers (1-hop from deps), config drift, signature deltas
+     d) Guards: Scope, Rule, Impact consume diff + features + dry_run
+     e) LLM ticket_alignment + dry_run_impact_llm (LLM-first with deterministic fallbacks)
+     f) compute score/rank deterministically (profile weights)
    - Output: final report JSON.
 
 ### Storage Layout
 - `storage/{repoId}/knowledge_min/` → persistent JSON knowledge bundle.
-- `storage/{repoId}/tickets/{ticketId}/pr_{n}/` → inputs/outputs for each run.
+- `results/{repoId}/analysis/` → inputs/outputs for each run (overwritten by repoId/ticket run to avoid clutter).
 
 ### Milestones
 - M0: Flask skeleton + health.
 - M1: knowledge generation CLI + endpoints.
 - M2: diff service (local dirs) + guards.
-- M3: LLM ticket alignment + scoring + report.
+- M3: Dry-Run Analyzer + feature_summary + guard integration.
+- M4: LLM ticket alignment + dry_run impact + scoring + report.
 
 ### Risks
 - Knowledge fidelity: keep schemas minimal and conservative.
 - Diff parsing: stick to unified format with fixed flags.
 - Token use: keep inputs compact; avoid full file dumps.
+- Overfitting: use generic diff features and static dependency reasoning, not case-specific heuristics.
