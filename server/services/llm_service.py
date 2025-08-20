@@ -162,3 +162,33 @@ def build_repo_doc_llm(structure_doc: Dict[str, Any]) -> Dict[str, Any] | None:
     return out
 
 
+def refine_ticket_llm(freeform_text: str, structure: Dict[str, Any] | None = None, api_surface: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    system = (
+        "ONLY_OUTPUT valid JSON per the ticket schema with keys {schema_version, ticket{ id, title, summary, acceptance_criteria[], expected_change_scope{files_glob,modules}, out_of_scope_glob, labels, links }}. "
+        "Be concise and testable. Suggest files_glob using structure tree and api exports when present."
+    )
+    user = {
+        "schema_version": "1.0",
+        "freeform": freeform_text,
+        "structure": structure or {},
+        "api_surface": api_surface or {},
+    }
+    out = _openai_chat(system, user)
+    if out and "ticket" in out:
+        return out
+    # fallback minimal ticket
+    return {
+        "schema_version": "1.0",
+        "ticket": {
+            "id": "T-DRAFT",
+            "title": freeform_text.split("\n")[0][:80],
+            "summary": freeform_text[:240],
+            "acceptance_criteria": [{"id": "AC-1", "text": freeform_text[:120], "verification": "manual"}],
+            "expected_change_scope": {"files_glob": [], "modules": []},
+            "out_of_scope_glob": ["docs/**", "examples/**", "scripts/**"],
+            "labels": [],
+            "links": [],
+        },
+    }
+
+

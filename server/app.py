@@ -2,6 +2,7 @@ import os
 from flask import Flask, jsonify
 from server.routes.knowledge_routes import knowledge_bp
 from server.routes.pr_routes import pr_bp
+from server.routes.ticket_routes import ticket_bp
 
 
 def create_app() -> Flask:
@@ -13,6 +14,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(knowledge_bp)
     app.register_blueprint(pr_bp)
+    app.register_blueprint(ticket_bp)
     return app
 
 

@@ -7,9 +7,8 @@ from typing import Dict, Any
 
 from flask import Blueprint, jsonify, request
 
-from server.services.knowledge_service import (
-    generate_repo_knowledge,
-)
+from server.services.knowledge_service import generate_repo_knowledge
+from server.services.llm_service import build_repo_doc_llm
 
 
 knowledge_bp = Blueprint("knowledge", __name__)
@@ -28,6 +27,14 @@ def generate_knowledge_route():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     artifacts = generate_repo_knowledge(repo_dir=repo_dir, out_dir=str(out_dir))
+    # LLM post-process repo.json
+    try:
+        structure_doc = json.loads((out_dir / "structure.json").read_text(encoding="utf-8"))
+        repo_doc = build_repo_doc_llm(structure_doc)
+        if repo_doc and isinstance(repo_doc, dict):
+            (out_dir / "repo.json").write_text(json.dumps(repo_doc, indent=2), encoding="utf-8")
+    except Exception:
+        pass
     return jsonify({"ok": True, "artifacts": artifacts, "out_dir": str(out_dir)}), 200
 
 

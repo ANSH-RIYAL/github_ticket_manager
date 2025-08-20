@@ -22,7 +22,12 @@ Build a minimal, reliable local PR validation service using Flask + OpenAI. JSON
    - Input: { repo_dir }
    - Output: `repo.json`, `structure.json`, `api_surface.json`, `deps.json`, `rules.json`, `profile.json` under `storage/{repoId}/knowledge_min/`.
 
-2) Local PR Analyze
+2) Ticket Propose (LLM)
+   - Input: { repo_dir, freeform_text }
+   - Steps: LLM converts freeform to strict ticket.json using structure/api_surface as hints
+   - Output: ticket.json
+
+3) Local PR Analyze
    - Input: { base_dir, head_dir, ticket }
    - Steps: compute `diff_bundle.json` via git diff; run ScopeGuard, RuleGuard, ImpactGuard; call LLM for ticket alignment; compute score/rank.
    - Output: final report JSON.
