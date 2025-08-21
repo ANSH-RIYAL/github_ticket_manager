@@ -81,29 +81,34 @@ def analyze_local_pr_route():
     changed_dirs = sorted({str(Path(f.get("path") or "").parent) if str(Path(f.get("path") or "").parent) != "." else "" for f in diff_bundle.get("files", []) if f.get("path")})
     per_dir_alignment: List[Dict[str, Any]] = []
     per_dir_impact: List[Dict[str, Any]] = []
+    per_directory: List[Dict[str, Any]] = []
     for rel in changed_dirs:
         ctx = get_dir_context(shadow_root=str(shadow_diff_root), rel_path=rel, include_diff=True, budget=3000)
         try:
             a = ticket_alignment_shadow(ticket=ticket, dir_context=ctx, global_summary=global_summary)
-            per_dir_alignment.append(a)
+            per_dir_alignment.append({"rel_path": rel, "alignment": a})
         except Exception:
-            pass
+            per_dir_alignment.append({"rel_path": rel, "alignment": {"ticket_alignment": {"matched": [], "unmet": [], "evidence": []}}})
         try:
             ig = impact_guard_shadow(dir_context=ctx, feature_summary=feature_summary, dry_run=dry_run)
-            per_dir_impact.append(ig)
+            per_dir_impact.append({"rel_path": rel, "impact": ig})
         except Exception:
-            pass
+            per_dir_impact.append({"rel_path": rel, "impact": {"changed_exports": [], "signature_changes": [], "possibly_impacted": []}})
 
     # Merge per-dir results conservatively into global
     ac_list = [c.get("id") for c in ticket.get("ticket", {}).get("acceptance_criteria", [])]
-    matched_union: List[str] = list(alignment.get("ticket_alignment", {}).get("matched", []))
+    matched_union: List[str] = [m for m in (alignment.get("ticket_alignment", {}).get("matched", []) or []) if m in ac_list]
     evidence: List[Dict[str, Any]] = list(alignment.get("ticket_alignment", {}).get("evidence", []))
     for a in per_dir_alignment:
-        ta = a.get("ticket_alignment", {})
+        ta = (a.get("alignment") or {}).get("ticket_alignment", {})
+        rel = a.get("rel_path", "")
         for m in ta.get("matched", []) or []:
-            if m not in matched_union:
+            if m in ac_list and m not in matched_union:
                 matched_union.append(m)
         for ev in ta.get("evidence", []) or []:
+            # attach rel_path if missing
+            if isinstance(ev, dict) and "rel_path" not in ev:
+                ev["rel_path"] = rel
             evidence.append(ev)
     unmet = [x for x in ac_list if x not in matched_union]
     alignment = {
@@ -117,17 +122,33 @@ def analyze_local_pr_route():
     sig: List[str] = []
     imp: List[str] = []
     for ig in per_dir_impact:
-        for v in ig.get("changed_exports", []) or []:
+        impact_obj = ig.get("impact") or {}
+        for v in impact_obj.get("changed_exports", []) or []:
             if v not in ch:
                 ch.append(v)
-        for v in ig.get("signature_changes", []) or []:
+        for v in impact_obj.get("signature_changes", []) or []:
             if v not in sig:
                 sig.append(v)
-        for v in ig.get("possibly_impacted", []) or []:
+        for v in impact_obj.get("possibly_impacted", []) or []:
             if v not in imp:
                 imp.append(v)
     if ch or sig or imp:
         impact_out = {"changed_exports": ch, "signature_changes": sig, "possibly_impacted": imp}
+
+    # Build per_directory array
+    for i in range(len(per_dir_alignment)):
+        rel = per_dir_alignment[i].get("rel_path", "")
+        align = (per_dir_alignment[i].get("alignment") or {}).get("ticket_alignment", {})
+        imp_dir = (per_dir_impact[i].get("impact") if i < len(per_dir_impact) else {}) or {}
+        per_directory.append({
+            "rel_path": rel,
+            "matched": [m for m in (align.get("matched", []) or []) if m in ac_list],
+            "impact": {
+                "changed_exports": imp_dir.get("changed_exports", []),
+                "signature_changes": imp_dir.get("signature_changes", []),
+                "possibly_impacted": imp_dir.get("possibly_impacted", []),
+            }
+        })
 
     score, risk_level, rank, recommendations = compute_score_and_rank(
         profile=bundle["profile"],
@@ -157,6 +178,7 @@ def analyze_local_pr_route():
         "impact": impact_out,
         "feature_summary": feature_summary,
         "dry_run": {**dry_run, "ast_deltas": ast_deltas},
+        "per_directory": per_directory,
         "policy_violations": policy_violations,
         "manifest_ref": "manifest.json",
         "score": score,
@@ -186,6 +208,8 @@ def analyze_local_pr_route():
         "run_id": run_id,
         "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         "budgets": {"root": 4000, "dir": 3000},
+        "base_dir": base_dir,
+        "head_dir": head_dir,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     extra = {"shadow_diff_root": str(shadow_diff_root)} if 'shadow_diff_root' in locals() else {}

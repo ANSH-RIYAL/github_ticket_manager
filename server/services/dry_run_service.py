@@ -222,6 +222,52 @@ def static_dry_run(api_surface: Dict[str, Any], deps: Dict[str, Any], diff_bundl
     hop_truncated = len(first_hop) > 200 or len(second_hop) > 200
 
     semantic = _compute_semantic_deltas(diff_bundle)
+
+    # Dependency drift from package manifests and lockfiles
+    dep_drift: List[Dict[str, Any]] = []
+    def parse_dep_line(line: str) -> Tuple[str, str] | None:
+        # match JSON-like:  "pkg": "1.2.3"
+        import re
+        m = re.search(r'"([A-Za-z0-9_@\/\-]+)"\s*:\s*"([\^~<>*=A-Za-z0-9_\.-]+)"', line)
+        if m:
+            return m.group(1), m.group(2)
+        return None
+    # Collect adds/removes per file
+    man_changes: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for f in diff_bundle.get("files", []):
+        path = f.get("path") or ""
+        if not path:
+            continue
+        lower = path.lower()
+        if not any(k in lower for k in ("package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock")):
+            continue
+        added_map: Dict[str, str] = {}
+        removed_map: Dict[str, str] = {}
+        for h in f.get("hunks", []) or []:
+            for line in (h.get("text") or "").splitlines():
+                if line.startswith("+"):
+                    p = parse_dep_line(line)
+                    if p:
+                        added_map[p[0]] = p[1]
+                elif line.startswith("-"):
+                    p = parse_dep_line(line)
+                    if p:
+                        removed_map[p[0]] = p[1]
+        # pair changes
+        for name, oldv in removed_map.items():
+            newv = added_map.get(name)
+            if newv and newv != oldv:
+                # naive semver diff
+                def semver_major(s: str) -> str:
+                    import re
+                    m = re.search(r'(\d+)', s)
+                    return m.group(1) if m else ""
+                major_old = semver_major(oldv)
+                major_new = semver_major(newv)
+                change = "unknown"
+                if major_old and major_new:
+                    change = "major" if major_old != major_new else "minor_or_patch"
+                dep_drift.append({"file": path, "dep": name, "from": oldv, "to": newv, "change": change})
     return {
         "schema_version": "1.0",
         "symbols_touched": {
@@ -233,6 +279,7 @@ def static_dry_run(api_surface: Dict[str, Any], deps: Dict[str, Any], diff_bundl
         "callers_2hop_truncated": hop_truncated,
         "config_drift": [],
         "semantic_deltas": semantic,
+        "dep_drift": dep_drift,
         "notes": "static only; no execution",
     }
 

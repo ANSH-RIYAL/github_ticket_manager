@@ -52,6 +52,15 @@ def evaluate_policies(report: Dict[str, Any], policies: Dict[str, Any]) -> List[
             "path": p,
             "evidence_ref": {"rel_path": str(Path(p).parent) if "/" in p else "", "file": Path(p).name if p != "<unknown>" else p},
         })
+    # dependency drift
+    for d in (report.get("dry_run", {}) or {}).get("dep_drift", []) or []:
+        level = "error" if d.get("change") == "major" else "warn"
+        violations.append({
+            "id": "DEPENDENCY_DRIFT",
+            "level": level,
+            "path": d.get("file"),
+            "evidence_ref": {"dep": d.get("dep"), "from": d.get("from"), "to": d.get("to"), "change": d.get("change")},
+        })
     return violations
 
 

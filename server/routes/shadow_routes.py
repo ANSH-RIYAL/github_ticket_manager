@@ -93,20 +93,27 @@ def shadow_file_content_route():
     max_bytes = int(payload.get("max_bytes", 4000))
     if not repo_id:
         return jsonify({"ok": False, "error": "repo_id required"}), 400
-    base = Path("results") / repo_id / ("shadow_diff" if run_id else "shadow")
-    if run_id:
-        base = base / run_id
-    # Fetch from shadow diff context: for simplicity, read the head file under the real head_dir is not stored; this endpoint is a placeholder to be extended with base/head paths in manifest.
-    # For now, return from shadow context if context captured excerpts (future: include base/head roots in manifest and resolve here).
+    # Resolve manifest for base/head paths
     try:
-        d = base if rel_path == "" else (base / rel_path)
-        meta = {}
-        if (d / "_dir.diff.json").exists():
-            meta = json.loads((d / "_dir.diff.json").read_text(encoding="utf-8"))
-        # Not storing file bodies; return empty with guidance
-        return jsonify({"ok": True, "content": "", "truncated": False, "note": "file bodies not stored; extend manifest to resolve base/head paths"}), 200
-    except Exception:
-        return jsonify({"ok": False, "error": "unavailable"}), 500
+        analysis_root = Path("results") / repo_id / "analysis" / (run_id or "")
+        manifest_path = analysis_root / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+        base_dir = manifest.get("base_dir")
+        head_dir = manifest.get("head_dir")
+        root = head_dir if where == "head" else base_dir
+        if not root:
+            return jsonify({"ok": False, "error": "manifest missing base/head"}), 400
+        target = Path(root) / rel_path
+        if not target.exists() or not target.is_file():
+            return jsonify({"ok": False, "error": "file not found"}), 404
+        data = target.read_bytes()[:max_bytes]
+        try:
+            text = data.decode("utf-8", errors="ignore")
+        except Exception:
+            text = ""
+        return jsonify({"ok": True, "content": text, "truncated": target.stat().st_size > max_bytes}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @shadow_bp.post("/policy/evaluate")
