@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Set
 
 
 CODE_GLOBS = (
@@ -134,6 +134,58 @@ def build_feature_summary(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) -
 _EXPORT_RE = re.compile(r"\bexport\s+(?:function|const|class|interface|type)\s+([A-Za-z0-9_]+)")
 
 
+def _extract_calls_from_hunks(hunks: List[Dict[str, Any]]) -> Tuple[Dict[str, int], Dict[str, int]]:
+    call_pat = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    method_pat = re.compile(r"\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    added: Dict[str, int] = {}
+    removed: Dict[str, int] = {}
+    for h in hunks or []:
+        text = h.get("text") or ""
+        for line in text.splitlines():
+            if line.startswith("+"):
+                for m in call_pat.findall(line):
+                    added[m] = added.get(m, 0) + 1
+                for m in method_pat.findall(line):
+                    added[m] = added.get(m, 0) + 1
+            elif line.startswith("-"):
+                for m in call_pat.findall(line):
+                    removed[m] = removed.get(m, 0) + 1
+                for m in method_pat.findall(line):
+                    removed[m] = removed.get(m, 0) + 1
+    return added, removed
+
+
+def _compute_semantic_deltas(diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
+    total_added: Dict[str, int] = {}
+    total_removed: Dict[str, int] = {}
+    for f in diff_bundle.get("files", []):
+        # only analyze code files for semantics
+        path = f.get("path") or ""
+        if not _is_code_file(path):
+            continue
+        hunks = f.get("hunks", [])
+        a, r = _extract_calls_from_hunks(hunks)
+        for k, v in a.items():
+            total_added[k] = total_added.get(k, 0) + v
+        for k, v in r.items():
+            total_removed[k] = total_removed.get(k, 0) + v
+    # identify likely replacements: call reduced in removed and increased in added
+    replacements: List[Dict[str, Any]] = []
+    for rem_name, rem_cnt in total_removed.items():
+        # naive: if there exists an added name with similar suffix/prefix or common roots, include pairs of interest
+        for add_name, add_cnt in total_added.items():
+            if rem_name != add_name and (rem_name.lower() in add_name.lower() or add_name.lower() in rem_name.lower()):
+                replacements.append({"from": rem_name, "to": add_name, "removed": rem_cnt, "added": add_cnt})
+    # compact output: top few entries
+    def top_n(d: Dict[str, int], n: int = 10) -> List[Dict[str, Any]]:
+        return [{"name": k, "count": d[k]} for k in sorted(d.keys(), key=lambda x: -d[x])[:n]]
+    return {
+        "calls_added": top_n(total_added),
+        "calls_removed": top_n(total_removed),
+        "likely_replacements": replacements[:10],
+    }
+
+
 def static_dry_run(api_surface: Dict[str, Any], deps: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
     changed_files = [f.get("path") for f in diff_bundle.get("files", []) if f.get("path")]
     symbols_added: List[str] = []
@@ -156,12 +208,20 @@ def static_dry_run(api_surface: Dict[str, Any], deps: Dict[str, Any], diff_bundl
                     if m:
                         symbols_removed.append(f"{path}#${m.group(1)}")
 
-    # reverse deps: who depends on changed files
+    # reverse deps: who depends on changed files (2-hop with caps)
     rev: Dict[str, List[str]] = {}
     for e in deps.get("edges", []):
         rev.setdefault(e.get("to"), []).append(e.get("from"))
-    callers = sorted(set([c for p in changed_files for c in rev.get(p, [])]))
+    first_hop: Set[str] = set()
+    for p in changed_files:
+        first_hop.update(rev.get(p, []))
+    second_hop: Set[str] = set()
+    for n in list(first_hop)[:200]:
+        second_hop.update(rev.get(n, []))
+    callers = sorted(set(list(first_hop)[:200] + list(second_hop)[:200]))
+    hop_truncated = len(first_hop) > 200 or len(second_hop) > 200
 
+    semantic = _compute_semantic_deltas(diff_bundle)
     return {
         "schema_version": "1.0",
         "symbols_touched": {
@@ -170,7 +230,9 @@ def static_dry_run(api_surface: Dict[str, Any], deps: Dict[str, Any], diff_bundl
         },
         "signature_deltas": sorted(set(signature_changes)),
         "callers": callers,
+        "callers_2hop_truncated": hop_truncated,
         "config_drift": [],
+        "semantic_deltas": semantic,
         "notes": "static only; no execution",
     }
 

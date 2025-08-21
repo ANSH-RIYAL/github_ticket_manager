@@ -9,3 +9,12 @@ prompt_performance/
 repos/
 
 tmp_scenarios/
+
+node_modules/
+package-lock.json
+.env
+.env.*
+npm-debug.log*
+yarn-error.log
+.idea/
+.vscode/

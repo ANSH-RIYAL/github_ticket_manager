@@ -33,11 +33,11 @@ Build a minimal, reliable local PR validation service using Flask + OpenAI. JSON
    - Steps:
      a) compute `diff_bundle.json` via git diff
      b) build `feature_summary.json` (export/signature changes, out_of_scope_count, config drift, churn, code/noncode ratio)
-     c) Dry-Run Analyzer: `dry_run.json` with symbol touches, callers (1-hop from deps), config drift, signature deltas
+     c) Dry-Run Analyzer: `dry_run.json` with symbol touches, callers (2-hop with caps), config drift, signature deltas, semantic operation deltas, AST deltas
      d) Guards: Scope, Rule, Impact consume diff + features + dry_run
      e) LLM ticket_alignment + dry_run_impact_llm (LLM-first with deterministic fallbacks)
      f) compute score/rank deterministically (profile weights)
-   - Output: final report JSON.
+   - Output: final report JSON with banded ranks and small evidence-based score adjustments.
 
 ### Storage Layout
 - `storage/{repoId}/knowledge_min/` → persistent JSON knowledge bundle.

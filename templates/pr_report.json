@@ -4,6 +4,8 @@
   "scope": { "out_of_scope_files": [] },
   "rules": { "violations": [] },
   "impact": { "changed_exports": [], "signature_changes": [], "possibly_impacted": [] },
+  "feature_summary": { "out_of_scope_count": 0, "config_drift": [], "export_changes": 0, "signature_changes": 0 },
+  "dry_run": { "symbols_touched": [], "callers": [], "callers_2hop_truncated": false, "semantic_deltas": {"calls_added":[],"calls_removed":[],"likely_replacements":[]}, "ast_deltas": {"signature_breaking":[],"exports_added":[],"exports_removed":[]}, "config_drift": [], "notes": "" },
   "score": 0,
   "risk_level": "low|medium|high",
   "rank": 3,

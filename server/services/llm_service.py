@@ -49,7 +49,7 @@ def _log_prompt(name: str, system: str, user_obj: Dict[str, Any], response_obj: 
         pass
 
 
-def evaluate_ticket_alignment(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate_ticket_alignment(ticket: Dict[str, Any], diff_bundle: Dict[str, Any], feature_summary: Dict[str, Any] | None = None, dry_run: Dict[str, Any] | None = None) -> Dict[str, Any]:
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
         return _heuristic_alignment(ticket, diff_bundle)
@@ -57,12 +57,12 @@ def evaluate_ticket_alignment(ticket: Dict[str, Any], diff_bundle: Dict[str, Any
     # Model call with strict IO, per-criterion evidence requirement
     system = (
         "ONLY_OUTPUT valid JSON with {\"schema_version\":\"1.0\", \"ticket_alignment\":{\"matched\":[],\"unmet\":[],\"evidence\":[]}}. "
-        "For each acceptance criterion, decide matched/unmet strictly from diff hunks. "
-        "Match AC-1 if you see throw RangeError for non-integer amount. Match AC-2 if you see Number.isNaN handling. "
-        "Include file paths and hunk metas in evidence. If unsure, mark unmet."
+        "For each acceptance criterion, decide matched/unmet using diff hunks plus structural evidence. "
+        "Require mapping each matched AC to either (a) semantic deltas (likely_replacements or calls_added) or (b) AST deltas (exports/signature), or (c) explicit caller paths from dry_run.callers. "
+        "If no structural evidence exists, mark AC unmet. Be conservative."
     )
     slim = _slim_diff(diff_bundle, max_hunk_chars=3000)
-    user_payload = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff": slim}
+    user_payload = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff": slim, "feature_summary": feature_summary or {}, "dry_run": dry_run or {}}
     body = {
         "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         "messages": [
@@ -167,11 +167,16 @@ def scope_guard_llm(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict
     inp = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff": slim}
     out = _openai_chat(system, inp)
     _log_prompt("scope_guard", system, inp, out)
-    if out and "out_of_scope_files" in out:
-        return {"out_of_scope_files": sorted(set(out.get("out_of_scope_files", []))) }
-    # fallback heuristic
+    # Always compute deterministic scope and prefer it to avoid LLM misclassification
     from .guards import ScopeGuard as _SG  # type: ignore
-    return _SG.run(ticket, diff_bundle)
+    det = _SG.run(ticket, diff_bundle)
+    if out and "out_of_scope_files" in out:
+        # Intersect LLM result with deterministic to be conservative
+        llm_list = set(out.get("out_of_scope_files", []))
+        det_list = set(det.get("out_of_scope_files", []))
+        final = sorted(llm_list.intersection(det_list))
+        return {"out_of_scope_files": final}
+    return det
 
 
 def rule_guard_llm(rules: Dict[str, Any], diff_bundle: Dict[str, Any], deps: Dict[str, Any]) -> Dict[str, Any]:
@@ -189,11 +194,11 @@ def rule_guard_llm(rules: Dict[str, Any], diff_bundle: Dict[str, Any], deps: Dic
     return _RG.run(rules, diff_bundle, deps)
 
 
-def impact_guard_llm(api: Dict[str, Any], deps: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
+def impact_guard_llm(api: Dict[str, Any], deps: Dict[str, Any], diff_bundle: Dict[str, Any], feature_summary: Dict[str, Any] | None = None, dry_run: Dict[str, Any] | None = None) -> Dict[str, Any]:
     system = (
         "ONLY_OUTPUT valid JSON: {\"changed_exports\":[],\"signature_changes\":[],\"possibly_impacted\":[]}. "
-        "Detect any added/removed/modified export lines in diff hunks (lines starting with 'export '). Map to symbols. "
-        "Use api.exports and deps to list dependents of changed files."
+        "Use: (a) slim diff hunks, (b) filtered api_surface, (c) pruned deps, (d) feature_summary (config drift, churn), "
+        "(e) dry_run (symbols_touched, signature_deltas, callers, semantic_deltas). Prefer structural signals over heuristics."
     )
     slim = _slim_diff(diff_bundle, max_hunk_chars=3000)
     # filter api exports to changed file set
@@ -213,7 +218,7 @@ def impact_guard_llm(api: Dict[str, Any], deps: Dict[str, Any], diff_bundle: Dic
         sub_edges = [e for e in edges if e.get("from") in neighbors or e.get("to") in neighbors]
         return {"schema_version": deps_doc.get("schema_version", "1.0"), "nodes": sub_nodes, "edges": sub_edges}
     pruned_deps = prune_deps_graph(deps, changed)
-    inp = {"schema_version": "1.0", "api_surface": filtered_api, "deps": pruned_deps, "diff": slim}
+    inp = {"schema_version": "1.0", "api_surface": filtered_api, "deps": pruned_deps, "diff": slim, "feature_summary": feature_summary or {}, "dry_run": dry_run or {}}
     out = _openai_chat(system, inp)
     _log_prompt("impact_guard", system, inp, out)
     if out and all(k in out for k in ("changed_exports", "signature_changes", "possibly_impacted")):

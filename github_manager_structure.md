@@ -16,6 +16,7 @@ server/
     llm_service.py
     orchestrator.py
     dry_run_service.py
+    ast_service.py
   storage/
     README.md
 templates/

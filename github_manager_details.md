@@ -69,8 +69,10 @@ Expected output:
 ### Tools (internal)
 - diff_service: compute_local_diff(base_dir, head_dir) → `diff_bundle.json`.
 - knowledge_service: repo scan → `repo.json`, `structure.json`, `api_surface.json`, `deps.json`.
+- dry_run_service: feature extraction (churn, code/noncode, docs/tests/scripts, config drift), semantic deltas, 2-hop dependency callers.
+- ast_service: Node-based AST extractor to summarize exports/functions and compute AST deltas.
 - guards: ScopeGuard, RuleGuard, ImpactGuard, DryRunGuard (feature extraction + static impact).
-- llm_service: evaluate_ticket_alignment(ticket, diff_bundle); dry_run_impact_llm(ticket, feature_summary, dry_run).
+- llm_service: evaluate_ticket_alignment(ticket, diff_bundle, feature_summary, dry_run); dry_run_impact_llm(ticket, feature_summary, dry_run).
 
 ### Final report (JSON)
 ```json
@@ -81,7 +83,7 @@ Expected output:
   "rules": { "violations": [] },
   "impact": { "changed_exports": [], "signature_changes": [], "possibly_impacted": [] },
   "feature_summary": { "out_of_scope_count": 0, "config_drift": [], "export_changes": 0, "signature_changes": 0 },
-  "dry_run": { "symbols_touched": [], "callers": [], "config_drift": [], "notes": "" },
+  "dry_run": { "symbols_touched": [], "callers": [], "callers_2hop_truncated": false, "semantic_deltas": {"calls_added":[],"calls_removed":[],"likely_replacements":[]}, "ast_deltas": {"signature_breaking":[],"exports_added":[],"exports_removed":[]}, "config_drift": [], "notes": "" },
   "score": 0,
   "risk_level": "low|medium|high",
   "rank": 3,
