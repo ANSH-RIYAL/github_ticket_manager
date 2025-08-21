@@ -19,6 +19,8 @@ from server.services.llm_service import (
 )
 from server.services.orchestrator import compute_score_and_rank
 from server.services.shadow_fs_service import build_shadow_knowledge, build_shadow_diff, get_dir_context
+from server.services.policy_service import evaluate_policies, load_policies
+from server.services.sarif_service import build_sarif
 
 
 pr_bp = Blueprint("pr", __name__)
@@ -137,6 +139,16 @@ def analyze_local_pr_route():
         dry_run={**dry_run, "ast_deltas": ast_deltas},
     )
 
+    # Policy evaluation and SARIF
+    policies_path = str(Path("templates") / "policies.sample.json")
+    policies = load_policies(policies_path)
+    policy_violations = evaluate_policies(report={
+        "impact": impact_out,
+        "scope": scope_out,
+        "feature_summary": feature_summary,
+    }, policies=policies)
+    sarif = build_sarif(report={}, policy_violations=policy_violations)
+
     report = {
         "schema_version": "1.0",
         "ticket_alignment": alignment.get("ticket_alignment", {}),
@@ -145,6 +157,8 @@ def analyze_local_pr_route():
         "impact": impact_out,
         "feature_summary": feature_summary,
         "dry_run": {**dry_run, "ast_deltas": ast_deltas},
+        "policy_violations": policy_violations,
+        "manifest_ref": "manifest.json",
         "score": score,
         "risk_level": risk_level,
         "rank": rank,
@@ -164,6 +178,16 @@ def analyze_local_pr_route():
     (out_dir / "feature_summary.json").write_text(json.dumps(feature_summary, indent=2), encoding="utf-8")
     (out_dir / "dry_run.json").write_text(json.dumps(report["dry_run"], indent=2), encoding="utf-8")
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (out_dir / "report.sarif.json").write_text(json.dumps(sarif, indent=2), encoding="utf-8")
+    # minimal manifest
+    manifest = {
+        "schema_version": "1.0",
+        "repo_id": repo_id,
+        "run_id": run_id,
+        "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        "budgets": {"root": 4000, "dir": 3000},
+    }
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     extra = {"shadow_diff_root": str(shadow_diff_root)} if 'shadow_diff_root' in locals() else {}
     return jsonify({"ok": True, "report": report, "output_dir": str(out_dir), **extra}), 200
 

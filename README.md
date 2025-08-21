@@ -15,6 +15,9 @@ This service validates local PRs using a shadow knowledge tree (per-directory me
 - POST `/shadow/diff` { base_dir, head_dir }
 - GET `/shadow/context` { repo_id, [run_id], rel_path, budget }
 - POST `/local/pr/analyze` { base_dir, head_dir, ticket }
+- POST `/shadow/file_content` { repo_id, run_id?, rel_path, where, max_bytes }
+- POST `/policy/evaluate` { report, policies? }
+- POST `/export/sarif` { report }
 
 ## Environment
 Create a `.env`:
@@ -57,7 +60,7 @@ Where `ticket_payload.json` contains:
 ## Outputs
 - `results/{repoId}/shadow/` — SKT
 - `results/{repoId}/shadow_diff/{runId}/` — SDE
-- `results/{repoId}/analysis/{runId}/` — report, diff_bundle, feature_summary, dry_run
+- `results/{repoId}/analysis/{runId}/` — report, diff_bundle, feature_summary, dry_run, manifest, report.sarif.json
 - `prompt_performance/last_*.json` — prompt traces
 
 ## Notes

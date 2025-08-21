@@ -15,6 +15,8 @@ server/
     pr_routes.py
     ticket_routes.py
     shadow_routes.py
+    export_routes.py
+    policy_routes.py
   services/
     __init__.py
     knowledge_service.py
@@ -25,6 +27,9 @@ server/
     dry_run_service.py
     ast_service.py
     shadow_fs_service.py
+    policy_service.py
+    sarif_service.py
+    evidence_service.py
 templates/
   shadow_dir.meta.json
   shadow_dir.diff.json
@@ -38,6 +43,7 @@ templates/
   ticket.json
   diff_bundle.json
   pr_report.json
+  policies.sample.json
 ```
 
 ### Flask Routes
@@ -47,10 +53,16 @@ templates/
 - POST `/shadow/diff` { base_dir, head_dir } → builds Shadow Diff Environment under `results/{repoId}/shadow_diff/{runId}/`
 - GET `/shadow/context` { repo_id, [run_id], rel_path, budget } → returns merged directory context JSON
 - POST `/local/pr/analyze` { base_dir, head_dir, ticket } → root/global analysis (kept for now)
+- POST `/shadow/file_content` { repo_id, run_id?, rel_path, where, max_bytes }
+- POST `/policy/evaluate` { report, policies? }
+- POST `/export/sarif` { report }
 
 ### Modules
 - `shadow_fs_service`: builds SKT/SDE and provides `get_dir_context`.
-- `llm_service`: adds `ticket_alignment_shadow` and `impact_guard_shadow` for per-directory structured prompting.
+- `llm_service`: `ticket_alignment_shadow` and `impact_guard_shadow` for per-directory structured prompting.
+- `policy_service`: loads/evaluates policies; normalizes violations.
+- `sarif_service`: converts normalized violations + report signals to SARIF.
+- `evidence_service`: consolidates AC evidence from per-dir results and deterministic deltas.
 - Existing deterministic guards continue to run globally; orchestration can iterate per changed directory using shadow contexts.
 
 ### Configuration

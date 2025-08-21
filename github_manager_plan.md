@@ -8,7 +8,7 @@ Implement an AI-native shadow filesystem with per-directory knowledge and diff s
 - Analysis: Build SDE under `results/{repoId}/shadow_diff/{runId}/`.
 - Navigator: Retrieve bounded directory contexts.
 - LLM prompts: shadow-aware ticket alignment and impact.
-- Keep deterministic guards and current report schema.
+- Deterministic guards + Policy Engine → SARIF export.
 
 ### Dependencies
 - `git` CLI
@@ -26,8 +26,11 @@ Implement an AI-native shadow filesystem with per-directory knowledge and diff s
    - Steps: compute diff; partition changes per directory; write `_dir.diff.json` per directory; write `_index.json`.
    - Output: `results/{repoId}/shadow_diff/{runId}/` with shards.
 
-3) Analysis (phase 2)
+3) Analysis
    - Iterate over changed dirs; build dir contexts; run `ticket_alignment_shadow` and `impact_guard_shadow` per dir; aggregate with deterministic guards.
+   - Evidence Mapping: bind ACs to concrete files/hunks/AST deltas.
+   - Policy Evaluation: apply policy packs; produce normalized violations and SARIF.
+   - Outputs: report.json (with per_directory, policy_violations, manifest_ref), report.sarif.json.
 
 ### Storage Layout
 - `results/{repoId}/knowledge/` → repo/global knowledge
@@ -36,9 +39,9 @@ Implement an AI-native shadow filesystem with per-directory knowledge and diff s
 - `prompt_performance/` → prompt I/O logs
 
 ### Milestones
-- M0: dotenv + routes + shadow services + templates (this change)
-- M1: orchestrator shadow-aware loop + per-dir prompts
-- M2: evaluation on target repos; refine budgets and schemas
+- M0: dotenv + shadow services + templates (done)
+- M1: Policy Engine + SARIF + Evidence Mapper + file-content endpoint
+- M2: CI Action + PR comment adapter; evaluation on target repos; refine budgets/schemas
 
 ### Risks & Mitigations
 - Large directories → cap `no_change` lists; navigator budgets

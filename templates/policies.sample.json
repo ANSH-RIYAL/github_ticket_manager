@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "scope": {
+    "disallowed_globs": ["docs/**", "examples/**", "scripts/**"],
+    "max_out_of_scope": 0
+  },
+  "config_drift": {
+    "ports": {"level": "warn"},
+    "env": {"level": "warn"},
+    "lockfile": {"level": "error"}
+  },
+  "api_change": {
+    "signature_break": {"level": "error"},
+    "exports_removed": {"level": "error"},
+    "exports_added": {"level": "warn"}
+  },
+  "risk_thresholds": {
+    "high": "score < 60 or any error violation",
+    "medium": "60 <= score < 80 and no error violation",
+    "low": "score >= 80 and no error violation"
+  },
+  "sarif_mapping": {
+    "CONFIG_DRIFT_PORT": {"ruleId": "CONFIG_DRIFT_PORT", "level": "warning"},
+    "SIGNATURE_BREAK": {"ruleId": "SIGNATURE_BREAK", "level": "error"}
+  }
+}
+

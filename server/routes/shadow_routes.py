@@ -14,6 +14,8 @@ from server.services.shadow_fs_service import (
     build_shadow_diff,
     get_dir_context,
 )
+from server.services.policy_service import evaluate_policies, load_policies
+from server.services.sarif_service import build_sarif
 
 
 shadow_bp = Blueprint("shadow", __name__)
@@ -79,5 +81,42 @@ def shadow_context_route():
 
     ctx = get_dir_context(shadow_root=str(shadow_root), rel_path=rel_path, include_diff=include_diff, budget=budget)
     return jsonify({"ok": True, "context": ctx}), 200
+
+
+@shadow_bp.post("/shadow/file_content")
+def shadow_file_content_route():
+    payload: Dict[str, Any] = request.get_json(force=True, silent=False)
+    repo_id = payload.get("repo_id")
+    run_id = payload.get("run_id")
+    rel_path = payload.get("rel_path", "")
+    where = payload.get("where", "head")
+    max_bytes = int(payload.get("max_bytes", 4000))
+    if not repo_id:
+        return jsonify({"ok": False, "error": "repo_id required"}), 400
+    base = Path("results") / repo_id / ("shadow_diff" if run_id else "shadow")
+    if run_id:
+        base = base / run_id
+    # Fetch from shadow diff context: for simplicity, read the head file under the real head_dir is not stored; this endpoint is a placeholder to be extended with base/head paths in manifest.
+    # For now, return from shadow context if context captured excerpts (future: include base/head roots in manifest and resolve here).
+    try:
+        d = base if rel_path == "" else (base / rel_path)
+        meta = {}
+        if (d / "_dir.diff.json").exists():
+            meta = json.loads((d / "_dir.diff.json").read_text(encoding="utf-8"))
+        # Not storing file bodies; return empty with guidance
+        return jsonify({"ok": True, "content": "", "truncated": False, "note": "file bodies not stored; extend manifest to resolve base/head paths"}), 200
+    except Exception:
+        return jsonify({"ok": False, "error": "unavailable"}), 500
+
+
+@shadow_bp.post("/policy/evaluate")
+def policy_evaluate_route():
+    payload: Dict[str, Any] = request.get_json(force=True, silent=False)
+    report = payload.get("report", {})
+    policies_path = payload.get("policies_path")
+    policies = payload.get("policies") or load_policies(policies_path)
+    violations = evaluate_policies(report, policies)
+    sarif = build_sarif(report, violations)
+    return jsonify({"ok": True, "policy_violations": violations, "sarif": sarif}), 200
 
 

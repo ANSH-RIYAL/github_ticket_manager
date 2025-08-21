@@ -1,5 +1,11 @@
 ## Changelog
 
+### 2025-08-21
+- feat: add Policy Engine plan (policies.sample.json), SARIF export plan, and Evidence Mapper design
+- feat: add shadow file-content endpoint design; run manifest in outputs
+- docs: overhaul details/plan/structure to include policies, SARIF, evidence, manifest
+- docs: update README with new endpoints and outputs
+
 ### 2025-08-20 (later)
 - feat: AST analyzer (Node @babel/parser) and Python `ast_service.py`; extract exports/functions; compute AST deltas
 - feat: semantic operation deltas from diff hunks; added to `dry_run`
