@@ -14,11 +14,11 @@ from server.services.dry_run_service import build_feature_summary, static_dry_ru
 from server.services.ast_service import compute_ast_deltas
 from server.services.llm_service import (
     evaluate_ticket_alignment,
-    scope_guard_llm,
-    rule_guard_llm,
-    impact_guard_llm,
+    ticket_alignment_shadow,
+    impact_guard_shadow,
 )
 from server.services.orchestrator import compute_score_and_rank
+from server.services.shadow_fs_service import build_shadow_knowledge, build_shadow_diff, get_dir_context
 
 
 pr_bp = Blueprint("pr", __name__)
@@ -42,6 +42,15 @@ def analyze_local_pr_route():
     knowledge_dir = Path("results") / repo_id / "knowledge"
     bundle = load_knowledge_bundle(str(knowledge_dir))
 
+    # Ensure shadow knowledge exists (used by navigator contexts)
+    shadow_root = Path("results") / repo_id / "shadow"
+    if not shadow_root.exists():
+        shadow_root.mkdir(parents=True, exist_ok=True)
+        try:
+            build_shadow_knowledge(repo_dir=base_dir, out_dir=str(shadow_root))
+        except Exception:
+            pass
+
     diff_bundle = compute_local_diff(base_dir=base_dir, head_dir=head_dir, include_context=True)
     feature_summary = build_feature_summary(ticket=ticket, diff_bundle=diff_bundle)
     dry_run = static_dry_run(api_surface=bundle["api_surface"], deps=bundle["deps"], diff_bundle=diff_bundle)
@@ -50,12 +59,73 @@ def analyze_local_pr_route():
     changed_files = [f.get("path") for f in diff_bundle.get("files", []) if f.get("path")]
     ast_deltas = compute_ast_deltas(base_dir=base_dir, head_dir=head_dir, changed_files=changed_files)
 
-    # Prefer LLM guards with deterministic fallbacks
-    scope_out = scope_guard_llm(ticket=ticket, diff_bundle=diff_bundle)
-    rule_out = rule_guard_llm(rules=bundle["rules"], diff_bundle=diff_bundle, deps=bundle["deps"])
-    impact_out = impact_guard_llm(api=bundle["api_surface"], deps=bundle["deps"], diff_bundle=diff_bundle, feature_summary=feature_summary, dry_run=dry_run)
+    # Deterministic guards (global). Shadow-scoped LLM prompts are used for alignment/impact per directory
+    scope_out = ScopeGuard.run(ticket=ticket, diff_bundle=diff_bundle)
+    rule_out = RuleGuard.run(rules=bundle["rules"], diff_bundle=diff_bundle, deps=bundle["deps"])
+    impact_out = ImpactGuard.run(api=bundle["api_surface"], deps=bundle["deps"], diff_bundle=diff_bundle)
 
-    alignment = evaluate_ticket_alignment(ticket=ticket, diff_bundle=diff_bundle, feature_summary=feature_summary, dry_run=dry_run)
+    # Build shadow diff environment for this analysis and perform root + per-directory shadow prompts
+    run_id = __import__("datetime").datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    shadow_diff_root = Path("results") / repo_id / "shadow_diff" / run_id
+    shadow_diff_root.mkdir(parents=True, exist_ok=True)
+    build_shadow_diff(base_dir=base_dir, head_dir=head_dir, diff_bundle=diff_bundle, shadow_root=str(shadow_diff_root))
+
+    # Root context alignment
+    root_ctx = get_dir_context(shadow_root=str(shadow_diff_root), rel_path="", include_diff=True, budget=4000)
+    global_summary = {"feature_summary": feature_summary, "dry_run": dry_run}
+    alignment = ticket_alignment_shadow(ticket=ticket, dir_context=root_ctx, global_summary=global_summary)
+
+    # Per-directory shadow prompts
+    changed_dirs = sorted({str(Path(f.get("path") or "").parent) if str(Path(f.get("path") or "").parent) != "." else "" for f in diff_bundle.get("files", []) if f.get("path")})
+    per_dir_alignment: List[Dict[str, Any]] = []
+    per_dir_impact: List[Dict[str, Any]] = []
+    for rel in changed_dirs:
+        ctx = get_dir_context(shadow_root=str(shadow_diff_root), rel_path=rel, include_diff=True, budget=3000)
+        try:
+            a = ticket_alignment_shadow(ticket=ticket, dir_context=ctx, global_summary=global_summary)
+            per_dir_alignment.append(a)
+        except Exception:
+            pass
+        try:
+            ig = impact_guard_shadow(dir_context=ctx, feature_summary=feature_summary, dry_run=dry_run)
+            per_dir_impact.append(ig)
+        except Exception:
+            pass
+
+    # Merge per-dir results conservatively into global
+    ac_list = [c.get("id") for c in ticket.get("ticket", {}).get("acceptance_criteria", [])]
+    matched_union: List[str] = list(alignment.get("ticket_alignment", {}).get("matched", []))
+    evidence: List[Dict[str, Any]] = list(alignment.get("ticket_alignment", {}).get("evidence", []))
+    for a in per_dir_alignment:
+        ta = a.get("ticket_alignment", {})
+        for m in ta.get("matched", []) or []:
+            if m not in matched_union:
+                matched_union.append(m)
+        for ev in ta.get("evidence", []) or []:
+            evidence.append(ev)
+    unmet = [x for x in ac_list if x not in matched_union]
+    alignment = {
+        "schema_version": "1.0",
+        "ticket_alignment": {"matched": matched_union, "unmet": unmet, "evidence": evidence},
+        "notes": "shadow_alignment"
+    }
+
+    # Impact: union and de-dup (override deterministic if shadow has signals)
+    ch: List[str] = []
+    sig: List[str] = []
+    imp: List[str] = []
+    for ig in per_dir_impact:
+        for v in ig.get("changed_exports", []) or []:
+            if v not in ch:
+                ch.append(v)
+        for v in ig.get("signature_changes", []) or []:
+            if v not in sig:
+                sig.append(v)
+        for v in ig.get("possibly_impacted", []) or []:
+            if v not in imp:
+                imp.append(v)
+    if ch or sig or imp:
+        impact_out = {"changed_exports": ch, "signature_changes": sig, "possibly_impacted": imp}
 
     score, risk_level, rank, recommendations = compute_score_and_rank(
         profile=bundle["profile"],
@@ -87,13 +157,14 @@ def analyze_local_pr_route():
         },
     }
 
-    # Persist stable outputs under results/{repoId}/analysis
-    out_dir = Path("results") / repo_id / "analysis"
+    # Persist stable outputs under results/{repoId}/analysis/{run_id}
+    out_dir = Path("results") / repo_id / "analysis" / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "diff_bundle.json").write_text(json.dumps(diff_bundle, indent=2), encoding="utf-8")
     (out_dir / "feature_summary.json").write_text(json.dumps(feature_summary, indent=2), encoding="utf-8")
     (out_dir / "dry_run.json").write_text(json.dumps(report["dry_run"], indent=2), encoding="utf-8")
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    return jsonify({"ok": True, "report": report, "output_dir": str(out_dir)}), 200
+    extra = {"shadow_diff_root": str(shadow_diff_root)} if 'shadow_diff_root' in locals() else {}
+    return jsonify({"ok": True, "report": report, "output_dir": str(out_dir), **extra}), 200
 
 

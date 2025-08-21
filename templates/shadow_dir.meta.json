@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "dir_name": "root|name",
+  "rel_path": "",
+  "parent_meta": null,
+  "children": [ { "name": "child", "rel_path": "child", "meta": "child/_dir.meta.json" } ],
+  "files": [ { "name": "file.ts", "size": 0, "ext": ".ts", "kinds": ["code"] } ],
+  "links": { "api_exports": "api_exports.json", "deps_subgraph": "deps_subgraph.json" }
+}
+

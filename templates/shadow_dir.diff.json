@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "rel_path": "",
+  "summary": {
+    "files_changed_here": 0,
+    "insertions": 0,
+    "deletions": 0,
+    "no_change_omitted": false
+  },
+  "files": [
+    { "name": "file.ts", "status": "modified", "hunks": [ { "meta": "@@ -1,1 +1,1 @@", "old_start": 1, "old_lines": 1, "new_start": 1, "new_lines": 1, "text": "+x" } ] },
+    { "name": "other.ts", "status": "no_change" }
+  ],
+  "children": [ { "name": "child", "rel_path": "child", "diff": "child/_dir.diff.json" } ]
+}
+

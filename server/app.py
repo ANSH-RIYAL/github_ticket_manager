@@ -1,11 +1,14 @@
 import os
 from flask import Flask, jsonify
+from dotenv import load_dotenv
 from server.routes.knowledge_routes import knowledge_bp
 from server.routes.pr_routes import pr_bp
 from server.routes.ticket_routes import ticket_bp
+from server.routes.shadow_routes import shadow_bp
 
 
 def create_app() -> Flask:
+    load_dotenv()
     app = Flask(__name__)
 
     @app.get("/health")
@@ -15,6 +18,7 @@ def create_app() -> Flask:
     app.register_blueprint(knowledge_bp)
     app.register_blueprint(pr_bp)
     app.register_blueprint(ticket_bp)
+    app.register_blueprint(shadow_bp)
     return app
 
 

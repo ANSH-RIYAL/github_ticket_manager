@@ -158,77 +158,7 @@ def _openai_chat(system: str, user_obj: Dict[str, Any]) -> Dict[str, Any] | None
         return None
 
 
-def scope_guard_llm(ticket: Dict[str, Any], diff_bundle: Dict[str, Any]) -> Dict[str, Any]:
-    system = (
-        "ONLY_OUTPUT valid JSON: {\"out_of_scope_files\": []}. "
-        "Return paths from diff that violate ticket.expected_change_scope.files_glob or match out_of_scope_glob."
-    )
-    slim = _slim_diff(diff_bundle, files_only=True)
-    inp = {"schema_version": "1.0", "ticket": ticket.get("ticket", {}), "diff": slim}
-    out = _openai_chat(system, inp)
-    _log_prompt("scope_guard", system, inp, out)
-    # Always compute deterministic scope and prefer it to avoid LLM misclassification
-    from .guards import ScopeGuard as _SG  # type: ignore
-    det = _SG.run(ticket, diff_bundle)
-    if out and "out_of_scope_files" in out:
-        # Intersect LLM result with deterministic to be conservative
-        llm_list = set(out.get("out_of_scope_files", []))
-        det_list = set(det.get("out_of_scope_files", []))
-        final = sorted(llm_list.intersection(det_list))
-        return {"out_of_scope_files": final}
-    return det
-
-
-def rule_guard_llm(rules: Dict[str, Any], diff_bundle: Dict[str, Any], deps: Dict[str, Any]) -> Dict[str, Any]:
-    system = (
-        "ONLY_OUTPUT valid JSON: {\"violations\": []}. "
-        "For each rule, check changed file paths and deps edges. Include evidence with file paths or edge."
-    )
-    slim = _slim_diff(diff_bundle, files_only=True)
-    inp = {"schema_version": "1.0", "rules": rules, "diff": slim, "deps": deps}
-    out = _openai_chat(system, inp)
-    _log_prompt("rule_guard", system, inp, out)
-    if out and "violations" in out:
-        return {"violations": out.get("violations", [])}
-    from .guards import RuleGuard as _RG  # type: ignore
-    return _RG.run(rules, diff_bundle, deps)
-
-
-def impact_guard_llm(api: Dict[str, Any], deps: Dict[str, Any], diff_bundle: Dict[str, Any], feature_summary: Dict[str, Any] | None = None, dry_run: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    system = (
-        "ONLY_OUTPUT valid JSON: {\"changed_exports\":[],\"signature_changes\":[],\"possibly_impacted\":[]}. "
-        "Use: (a) slim diff hunks, (b) filtered api_surface, (c) pruned deps, (d) feature_summary (config drift, churn), "
-        "(e) dry_run (symbols_touched, signature_deltas, callers, semantic_deltas). Prefer structural signals over heuristics."
-    )
-    slim = _slim_diff(diff_bundle, max_hunk_chars=3000)
-    # filter api exports to changed file set
-    changed = {f.get("path") for f in diff_bundle.get("files", []) if f.get("path")}
-    # Reduce api exports to only those whose files changed; if none, still send an empty list
-    filtered_api = {"schema_version": api.get("schema_version", "1.0"), "exports": [e for e in api.get("exports", []) if e.get("from") in changed]}
-    # prune deps to 1-hop around changed files
-    def prune_deps_graph(deps_doc: Dict[str, Any], changed_paths: set[str]) -> Dict[str, Any]:
-        edges = deps_doc.get("edges", [])
-        nodes = deps_doc.get("nodes", [])
-        neighbors: set[str] = set()
-        for e in edges:
-            if e.get("from") in changed_paths or e.get("to") in changed_paths:
-                neighbors.add(e.get("from"))
-                neighbors.add(e.get("to"))
-        sub_nodes = [n for n in nodes if n.get("id") in neighbors or n.get("id") in changed_paths]
-        sub_edges = [e for e in edges if e.get("from") in neighbors or e.get("to") in neighbors]
-        return {"schema_version": deps_doc.get("schema_version", "1.0"), "nodes": sub_nodes, "edges": sub_edges}
-    pruned_deps = prune_deps_graph(deps, changed)
-    inp = {"schema_version": "1.0", "api_surface": filtered_api, "deps": pruned_deps, "diff": slim, "feature_summary": feature_summary or {}, "dry_run": dry_run or {}}
-    out = _openai_chat(system, inp)
-    _log_prompt("impact_guard", system, inp, out)
-    if out and all(k in out for k in ("changed_exports", "signature_changes", "possibly_impacted")):
-        return {
-            "changed_exports": sorted(set(out.get("changed_exports", []))),
-            "signature_changes": sorted(set(out.get("signature_changes", []))),
-            "possibly_impacted": sorted(set(out.get("possibly_impacted", []))),
-        }
-    from .guards import ImpactGuard as _IG  # type: ignore
-    return _IG.run(api, deps, diff_bundle)
+# Legacy global LLM guards removed; shadow-scoped prompts are used instead.
 
 
 def build_repo_doc_llm(structure_doc: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -272,4 +202,49 @@ def refine_ticket_llm(freeform_text: str, structure: Dict[str, Any] | None = Non
         },
     }
 
+
+def ticket_alignment_shadow(ticket: Dict[str, Any], dir_context: Dict[str, Any], global_summary: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    system = (
+        "ONLY_OUTPUT valid JSON with {\"schema_version\":\"1.0\", \"ticket_alignment\":{\"matched\":[],\"unmet\":[],\"evidence\":[]}}. "
+        "Use dir_context.meta/files, dir_context.diff.hunks, and dir_context.api_exports/deps_subgraph. "
+        "If structural evidence for an AC is absent in this subtree, leave it unmet unless explicitly proven in global_summary. Be conservative."
+    )
+    user_payload = {
+        "schema_version": "1.0",
+        "ticket": ticket.get("ticket", {}),
+        "dir_context": dir_context,
+        "global_summary": global_summary or {},
+    }
+    out = _openai_chat(system, user_payload)
+    _log_prompt("ticket_alignment_shadow", system, user_payload, out)
+    if out and "ticket_alignment" in out:
+        return out
+    return {
+        "schema_version": "1.0",
+        "ticket_alignment": {"matched": [], "unmet": [c.get("id") for c in ticket.get("ticket", {}).get("acceptance_criteria", [])], "evidence": []},
+        "notes": "shadow_fallback"
+    }
+
+
+def impact_guard_shadow(dir_context: Dict[str, Any], feature_summary: Dict[str, Any] | None = None, dry_run: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    system = (
+        "ONLY_OUTPUT valid JSON: {\"changed_exports\":[],\"signature_changes\":[],\"possibly_impacted\":[]}. "
+        "Use dir_context.diff.hunks + dir_context.api_exports + dir_context.deps_subgraph. Limit reasoning to this subtree."
+    )
+    user_payload = {
+        "schema_version": "1.0",
+        "dir_context": dir_context,
+        "feature_summary": feature_summary or {},
+        "dry_run": dry_run or {},
+    }
+    out = _openai_chat(system, user_payload)
+    _log_prompt("impact_guard_shadow", system, user_payload, out)
+    if out and all(k in out for k in ("changed_exports", "signature_changes", "possibly_impacted")):
+        return {
+            "changed_exports": out.get("changed_exports", []),
+            "signature_changes": out.get("signature_changes", []),
+            "possibly_impacted": out.get("possibly_impacted", []),
+        }
+    # fallback to empty impact for the subtree
+    return {"changed_exports": [], "signature_changes": [], "possibly_impacted": []}
 

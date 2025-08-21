@@ -1,0 +1,14 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "npm",
+			"script": "build",
+			"path": "repos/github_manager_target_repo_prs/pr_rank_1/examples/cdn",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "npm: build - repos/github_manager_target_repo_prs/pr_rank_1/examples/cdn",
+			"detail": "rm -rf node_modules/date-fns && mkdir -p node_modules && cp -r ../../lib node_modules/date-fns || pnpm run build-date-fns"
+		}
+	]
+}

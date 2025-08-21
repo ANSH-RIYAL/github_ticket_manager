@@ -1,57 +1,46 @@
-## GitHub Manager MVP Plan (local PR analyzer)
+## Plan: Build Shadow Filesystem and Agentic Analysis
 
 ### Goal
-Build a minimal, reliable local PR validation service using Flask + OpenAI. JSON-only artifacts; no GitHub integration in v0.
+Implement an AI-native shadow filesystem with per-directory knowledge and diff shards, plus strict JSON LLM prompting for scoped analysis.
 
-### MVP Scope (v0)
-- Generate JSON knowledge bundle from a base repository folder.
-- Accept a ticket JSON, a base folder, and a modified folder; compute git diff; analyze PR.
-- Produce a structured JSON report with rank and recommendations.
-- Include Dry-Run Analyzer (no execution): syntactic + static dependency impact + diff features.
-
-### Non-Goals (v0)
-- No GitHub API usage; local-only.
-- No automated unit tests; manual + CLI debugging only.
-- No auto-merge.
+### Scope
+- Initialization: Build SKT under `results/{repoId}/shadow/`.
+- Analysis: Build SDE under `results/{repoId}/shadow_diff/{runId}/`.
+- Navigator: Retrieve bounded directory contexts.
+- LLM prompts: shadow-aware ticket alignment and impact.
+- Keep deterministic guards and current report schema.
 
 ### Dependencies
-- OpenAI Chat Completions (ticket alignment only).
-- `git` CLI present on system.
+- `git` CLI
+- OpenAI Chat Completions via `.env` (`OPENAI_API_KEY`, `OPENAI_MODEL`)
+- `python-dotenv` for environment loading
 
-### Core Flows
-1) Generate Knowledge
+### Flows
+1) Shadow Init
    - Input: { repo_dir }
-   - Output: `repo.json`, `structure.json`, `api_surface.json`, `deps.json`, `rules.json`, `profile.json` under `storage/{repoId}/knowledge_min/`.
+   - Steps: walk repo; write `_dir.meta.json`, `api_exports.json`, `deps_subgraph.json`; write `_index.json`.
+   - Output: shadow tree under `results/{repoId}/shadow/`.
 
-2) Ticket Propose (LLM)
-   - Input: { repo_dir, freeform_text }
-   - Steps: LLM converts freeform to strict ticket.json using structure/api_surface as hints
-   - Output: ticket.json
+2) Shadow Diff
+   - Input: { base_dir, head_dir }
+   - Steps: compute diff; partition changes per directory; write `_dir.diff.json` per directory; write `_index.json`.
+   - Output: `results/{repoId}/shadow_diff/{runId}/` with shards.
 
-3) Local PR Analyze
-   - Input: { base_dir, head_dir, ticket }
-   - Steps:
-     a) compute `diff_bundle.json` via git diff
-     b) build `feature_summary.json` (export/signature changes, out_of_scope_count, config drift, churn, code/noncode ratio)
-     c) Dry-Run Analyzer: `dry_run.json` with symbol touches, callers (2-hop with caps), config drift, signature deltas, semantic operation deltas, AST deltas
-     d) Guards: Scope, Rule, Impact consume diff + features + dry_run
-     e) LLM ticket_alignment + dry_run_impact_llm (LLM-first with deterministic fallbacks)
-     f) compute score/rank deterministically (profile weights)
-   - Output: final report JSON with banded ranks and small evidence-based score adjustments.
+3) Analysis (phase 2)
+   - Iterate over changed dirs; build dir contexts; run `ticket_alignment_shadow` and `impact_guard_shadow` per dir; aggregate with deterministic guards.
 
 ### Storage Layout
-- `storage/{repoId}/knowledge_min/` → persistent JSON knowledge bundle.
-- `results/{repoId}/analysis/` → inputs/outputs for each run (overwritten by repoId/ticket run to avoid clutter).
+- `results/{repoId}/knowledge/` → repo/global knowledge
+- `results/{repoId}/shadow/` → SKT
+- `results/{repoId}/shadow_diff/{runId}/` → SDE
+- `prompt_performance/` → prompt I/O logs
 
 ### Milestones
-- M0: Flask skeleton + health.
-- M1: knowledge generation CLI + endpoints.
-- M2: diff service (local dirs) + guards.
-- M3: Dry-Run Analyzer + feature_summary + guard integration.
-- M4: LLM ticket alignment + dry_run impact + scoring + report.
+- M0: dotenv + routes + shadow services + templates (this change)
+- M1: orchestrator shadow-aware loop + per-dir prompts
+- M2: evaluation on target repos; refine budgets and schemas
 
-### Risks
-- Knowledge fidelity: keep schemas minimal and conservative.
-- Diff parsing: stick to unified format with fixed flags.
-- Token use: keep inputs compact; avoid full file dumps.
-- Overfitting: use generic diff features and static dependency reasoning, not case-specific heuristics.
+### Risks & Mitigations
+- Large directories → cap `no_change` lists; navigator budgets
+- Model drift → strict schemas + deterministic fallbacks
+- Path normalization → use repo-root-relative POSIX paths everywhere

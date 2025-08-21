@@ -17,4 +17,9 @@ package-lock.json
 npm-debug.log*
 yarn-error.log
 .idea/
-.vscode/
+.env
+prompt_performance/
+results/
+tmp*/
+*.log
+*.DS_Store

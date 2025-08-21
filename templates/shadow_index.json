@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "repo_id": "repo",
+  "root_meta": "_dir.meta.json",
+  "root_diff": "_dir.diff.json",
+  "generated_at": "",
+  "counts": { "dirs": 0, "files": 0 }
+}
+

@@ -1,4 +1,9 @@
-## GitHub Manager Structure (local PR analyzer)
+## Architecture: Shadow Knowledge + Diff Tree (AI-native)
+
+### High-level
+- **Shadow Knowledge Tree (SKT)**: Per-directory `_dir.meta.json` with parent/children links and pruned `api_exports.json` and `deps_subgraph.json` for that subtree.
+- **Shadow Diff Environment (SDE)**: Per-directory `_dir.diff.json` listing changed files in that directory, marking others as `no_change`, and linking to children’s diffs.
+- **Navigator**: Server-side context assembler exposing directory-scoped JSON contexts for LLM prompts with strict budgets.
 
 ### Repository Layout
 ```
@@ -8,6 +13,8 @@ server/
     __init__.py
     knowledge_routes.py
     pr_routes.py
+    ticket_routes.py
+    shadow_routes.py
   services/
     __init__.py
     knowledge_service.py
@@ -17,9 +24,11 @@ server/
     orchestrator.py
     dry_run_service.py
     ast_service.py
-  storage/
-    README.md
+    shadow_fs_service.py
 templates/
+  shadow_dir.meta.json
+  shadow_dir.diff.json
+  shadow_index.json
   repo.json
   structure.json
   api_surface.json
@@ -28,24 +37,25 @@ templates/
   profile.json
   ticket.json
   diff_bundle.json
-  feature_summary.json
-  dry_run.json
-README.md
+  pr_report.json
 ```
 
-### Flask Routes (v0 local)
+### Flask Routes
 - GET `/health`
-- POST `/generate_knowledge` { repo_dir } → writes knowledge_min bundle and returns artifact names
-- POST `/local/pr/analyze` { base_dir, head_dir, ticket } → returns final report JSON
+- POST `/generate_knowledge` { repo_dir } → writes repo-level knowledge bundle
+- POST `/shadow/init` { repo_dir } → builds Shadow Knowledge Tree under `results/{repoId}/shadow/`
+- POST `/shadow/diff` { base_dir, head_dir } → builds Shadow Diff Environment under `results/{repoId}/shadow_diff/{runId}/`
+- GET `/shadow/context` { repo_id, [run_id], rel_path, budget } → returns merged directory context JSON
+- POST `/local/pr/analyze` { base_dir, head_dir, ticket } → root/global analysis (kept for now)
 
-### Python Modules (high-level)
-- `knowledge_service`: scan repo and emit JSON artifacts
-- `diff_service`: compute local git diff between two folders; parse unified diff → diff_bundle.json
-- `dry_run_service`: extract diff features; perform static dependency impact reasoning (no execution)
-- `guards`: ScopeGuard, RuleGuard, ImpactGuard consume diff + features + dry_run
-- `llm_service`: ticket alignment + dry_run impact (LLM-first JSON)
-- `orchestrator`: runs dry-run, guards, ticket alignment, scoring, and assembles final report
+### Modules
+- `shadow_fs_service`: builds SKT/SDE and provides `get_dir_context`.
+- `llm_service`: adds `ticket_alignment_shadow` and `impact_guard_shadow` for per-directory structured prompting.
+- Existing deterministic guards continue to run globally; orchestration can iterate per changed directory using shadow contexts.
 
 ### Configuration
-- Environment: `OPENAI_API_KEY`, `MODEL` (e.g., `gpt-4o-mini`), `TIMEOUT_MS`
-- Feature flags: `RUN_JS_TESTS=0` (reserved), `ENABLE_DRY_RUN=1`
+- `.env` with `OPENAI_API_KEY`, `OPENAI_MODEL`. Loaded via `python-dotenv`.
+
+### Guarantees
+- All artifacts are strict JSON; linkable, stable, and referencable programmatically.
+- Prompt inputs are bounded and reproducible via navigator budgets.
